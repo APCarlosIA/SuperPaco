@@ -1,0 +1,39 @@
+# --- Secretos y credenciales (NUNCA subir) ---
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.pfx
+*.keystore
+*.jks
+id_rsa*
+id_ed25519*
+secrets.*
+credentials.*
+*credentials*.json
+service-account*.json
+config.local.*
+*.sqlite
+*.db
+
+# --- Dependencias y compilados ---
+node_modules/
+vendor/
+__pycache__/
+*.pyc
+.venv/
+venv/
+dist/
+build/
+.next/
+out/
+coverage/
+
+# --- Sistema / editores ---
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.log
