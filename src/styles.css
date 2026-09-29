@@ -1,0 +1,89 @@
+/*
+ * Estilos de la página del juego.
+ * El juego tiene un único aspecto oscuro tipo "sala recreativa", así que no hay
+ * modo claro: el fondo y los colores se fijan explícitamente.
+ */
+:root {
+  color-scheme: dark;
+  --page-background: #0d0b14;
+  --screen-frame: #231d33;
+  --spanish-gold: #fcd800;
+  --spanish-red: #c8102e;
+  --touch-button-fill: rgba(255, 255, 255, 0.12);
+  --touch-button-border: rgba(255, 255, 255, 0.35);
+}
+
+html,
+body {
+  height: 100%;
+  margin: 0;
+  overflow: hidden;
+  background: var(--page-background);
+}
+
+body {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  touch-action: none;
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-tap-highlight-color: transparent;
+}
+
+/* Pantalla del juego: se amplía sin suavizar para mantener los píxeles nítidos. */
+#game {
+  display: block;
+  background: #000;
+  image-rendering: pixelated;
+  image-rendering: crisp-edges;
+  box-shadow: 0 0 0 3px var(--screen-frame), 0 0 0 6px #000, 0 18px 60px rgba(0, 0, 0, 0.7);
+  outline: none;
+}
+
+/* Botones táctiles: solo visibles en móviles y tabletas (clase añadida por input.js). */
+#touch-controls {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  display: none;
+}
+
+body.has-touch-controls #touch-controls {
+  display: block;
+}
+
+.touch-button {
+  position: absolute;
+  box-sizing: border-box;
+  width: 62px;
+  height: 62px;
+  border-radius: 50%;
+  pointer-events: auto;
+  background: var(--touch-button-fill);
+  border: 2px solid var(--touch-button-border);
+  color: #fff;
+  font: 700 18px/58px ui-monospace, Menlo, Consolas, monospace;
+  text-align: center;
+}
+
+.touch-button.is-pressed {
+  background: rgba(252, 216, 0, 0.5);
+  border-color: var(--spanish-gold);
+}
+
+.touch-button.is-small {
+  width: 54px;
+  height: 30px;
+  border-radius: 8px;
+  font-size: 11px;
+  line-height: 26px;
+}
+
+#touch-left { left: 16px; bottom: calc(28px + env(safe-area-inset-bottom, 0px)); }
+#touch-right { left: 90px; bottom: calc(28px + env(safe-area-inset-bottom, 0px)); }
+#touch-down { left: 53px; bottom: calc(96px + env(safe-area-inset-bottom, 0px)); width: 50px; height: 44px; line-height: 40px; border-radius: 12px; }
+#touch-run { right: 90px; bottom: calc(22px + env(safe-area-inset-bottom, 0px)); }
+#touch-jump { right: 16px; bottom: calc(60px + env(safe-area-inset-bottom, 0px)); background: rgba(200, 16, 46, 0.35); }
+#touch-start { right: 16px; top: calc(12px + env(safe-area-inset-top, 0px)); }
+#touch-pause { right: 78px; top: calc(12px + env(safe-area-inset-top, 0px)); }

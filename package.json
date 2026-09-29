@@ -1,0 +1,22 @@
+{
+  "name": "super-paco",
+  "version": "1.0.0",
+  "description": "Súper Paco: La Tortilla Perdida. Plataformas 8 bits ambientado en España con 10 niveles.",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "node tools/devServer.js",
+    "build": "node tools/build.js",
+    "test": "node --test",
+    "lint": "eslint .",
+    "check": "npm run lint && npm test && npm run build"
+  },
+  "engines": {
+    "node": ">=20.19"
+  },
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "eslint": "^10.11.0",
+    "globals": "^17.12.0"
+  }
+}

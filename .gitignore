@@ -1,0 +1,9 @@
+# Dependencias de desarrollo (se reinstalan con "npm install")
+node_modules/
+
+# Archivos del sistema y secretos locales
+.DS_Store
+.env
+.env.*
+*.pem
+*.key
