@@ -7365,7 +7365,7 @@ const __module_src_graphics_backgroundConstants_js = (() => {
 const BACKGROUND_LAYER_WIDTH = 512;
 
 /** Fracción del movimiento de la cámara que recorre cada capa (más lejos = más lento). */
-const PARALLAX_FACTORS = Object.freeze({ farLayer: 0.1, midLayer: 0.28, nearLayer: 0.55 });
+const PARALLAX_FACTORS = Object.freeze({ farLayer: 0.1, midLayer: 0.28, nearLayer: 0.55, frontLayer: 1.35 });
 return { BACKGROUND_LAYER_WIDTH, PARALLAX_FACTORS };
 })();
 
@@ -8370,6 +8370,162 @@ const CITY_PAINTERS = {
 return { CITY_PAINTERS };
 })();
 
+// ─── src/graphics/foregroundArt.js ───
+const __module_src_graphics_foregroundArt_js = (() => {
+/**
+ * @file Capa de primer plano: siluetas oscuras y desenfocadas (hojas, farolas,
+ * guirnaldas, tuberías, estalactitas…) que pasan POR DELANTE de Paco, más
+ * deprisa que el suelo. Dan sensación de profundidad.
+ *
+ * Se pinta a media resolución y se amplía con suavizado, lo que la desenfoca
+ * de forma natural (como una lente enfocada más atrás).
+ */
+const { SCREEN_HEIGHT, RENDER_SCALE } = __module_src_config_constants_js;
+const { createCanvas } = __module_src_core_canvas_js;
+const { BACKGROUND_LAYER_WIDTH } = __module_src_graphics_backgroundConstants_js;
+const { wrapDraw, mix, linearGradient, TAU } = __module_src_graphics_backgroundKit_js;
+
+/** Resolución relativa de la capa (la mitad de la del juego). */
+const FOREGROUND_SCALE = RENDER_SCALE / 2;
+
+const W = BACKGROUND_LAYER_WIDTH;
+
+/** Matas de hierba o helechos pegados al borde inferior. */
+function foliageBottom(context, random, color, { count = 22, height = 26, wide = false } = {}) {
+  for (let index = 0; index < count; index++) {
+    const x = (index + random() * 0.8) * (W / count);
+    const bladeHeight = height * (0.5 + random() * 0.7);
+    wrapDraw(context, x - 14, 28, px => {
+      for (let blade = 0; blade < (wide ? 7 : 5); blade++) {
+        const angle = -Math.PI / 2 + (blade - 2) * 0.3 + (random() - 0.5) * 0.2;
+        const length = bladeHeight * (0.7 + random() * 0.5);
+        const baseX = px + 14 + (blade - 2) * 2;
+        context.beginPath();
+        context.moveTo(baseX - 1.6, SCREEN_HEIGHT + 4);
+        context.quadraticCurveTo(baseX + Math.cos(angle) * length * 0.5, SCREEN_HEIGHT - length * 0.6, baseX + Math.cos(angle) * length, SCREEN_HEIGHT - length + 8);
+        context.quadraticCurveTo(baseX + Math.cos(angle) * length * 0.4 + 2, SCREEN_HEIGHT - length * 0.5, baseX + 1.6, SCREEN_HEIGHT + 4);
+        context.closePath();
+        context.fillStyle = color;
+        context.fill();
+      }
+    });
+  }
+}
+
+/** Hojas y lianas que cuelgan del borde superior. */
+function foliageTop(context, random, color, { count = 8, length = 34 } = {}) {
+  for (let index = 0; index < count; index++) {
+    const x = (index + random() * 0.8) * (W / count);
+    const drop = length * (0.5 + random() * 0.8);
+    wrapDraw(context, x - 20, 40, px => {
+      context.strokeStyle = color; context.lineWidth = 1.2; context.lineCap = 'round';
+      context.beginPath(); context.moveTo(px + 20, -4); context.quadraticCurveTo(px + 20 + (random() - 0.5) * 8, drop * 0.5, px + 20 + (random() - 0.5) * 10, drop); context.stroke();
+      context.fillStyle = color;
+      for (let leaf = 1; leaf < 6; leaf++) {
+        const t = leaf / 6;
+        context.beginPath(); context.ellipse(px + 20 + Math.sin(leaf * 2) * 3, drop * t, 4.2, 1.7, (leaf % 2 ? 0.7 : -0.7), 0, TAU); context.fill();
+      }
+    });
+  }
+}
+
+/** Farolas de forja a lo largo del borde inferior. */
+function lampPosts(context, color, spacing = 170) {
+  for (let x = 40; x < W; x += spacing) {
+    wrapDraw(context, x - 10, 20, px => {
+      context.fillStyle = color;
+      context.fillRect(px + 9, SCREEN_HEIGHT - 120, 2.4, 124);
+      context.fillRect(px + 6, SCREEN_HEIGHT - 8, 8, 12);
+      context.beginPath(); context.moveTo(px + 4, SCREEN_HEIGHT - 124); context.lineTo(px + 16, SCREEN_HEIGHT - 124); context.lineTo(px + 13, SCREEN_HEIGHT - 132); context.lineTo(px + 7, SCREEN_HEIGHT - 132); context.closePath(); context.fill();
+      context.fillRect(px + 5, SCREEN_HEIGHT - 146, 10, 14);
+    });
+  }
+}
+
+/** Guirnalda de banderines que cruza la parte alta. */
+function bunting(context, color, y = 6, sag = 14) {
+  for (let x = 0; x < W; x += 128) {
+    context.strokeStyle = color; context.lineWidth = 0.7;
+    context.beginPath(); context.moveTo(x, y); context.quadraticCurveTo(x + 64, y + sag, x + 128, y); context.stroke();
+    for (let flag = 1; flag < 14; flag++) {
+      const t = flag / 14;
+      const px = x + 128 * t; const py = y + 2 * (1 - t) * t * sag;
+      context.fillStyle = color; context.beginPath(); context.moveTo(px - 3, py); context.lineTo(px + 3, py); context.lineTo(px, py + 8); context.closePath(); context.fill();
+    }
+  }
+}
+
+/** Tuberías y cables que cruzan el techo. */
+function pipesTop(context, random, color) {
+  context.fillStyle = color;
+  for (const y of [3, 9]) {
+    context.fillRect(0, y, W, 3.4);
+    for (let x = 0; x < W; x += 48 + random() * 20) { context.fillRect(x, y - 2, 4, 8); }
+  }
+  context.strokeStyle = color; context.lineWidth = 1;
+  for (let x = 20; x < W; x += 90) { context.beginPath(); context.moveTo(x, 12); context.quadraticCurveTo(x + 30, 30, x + 60, 12); context.stroke(); }
+}
+
+/** Estalactitas y estalagmitas. */
+function stalactites(context, random, color, { top = true, bottom = true } = {}) {
+  for (let x = 0; x < W; x += 24 + random() * 18) {
+    const h = 20 + random() * 44;
+    if (top) { context.fillStyle = color; context.beginPath(); context.moveTo(x, -4); context.lineTo(x + 14, -4); context.lineTo(x + 7, h); context.closePath(); context.fill(); }
+    if (bottom && random() > 0.5) { const bh = 14 + random() * 30; context.fillStyle = color; context.beginPath(); context.moveTo(x + 4, SCREEN_HEIGHT + 4); context.lineTo(x + 14, SCREEN_HEIGHT + 4); context.lineTo(x + 9, SCREEN_HEIGHT - bh); context.closePath(); context.fill(); }
+  }
+}
+
+/** Pelotas de luz difusas que flotan (polvo, luciérnagas, ceniza). */
+function floatingLights(context, random, rgb, count = 18) {
+  context.save();
+  context.globalCompositeOperation = 'lighter';
+  for (let index = 0; index < count; index++) {
+    const x = random() * W; const y = 30 + random() * 160; const r = 3 + random() * 6;
+    const gradient = context.createRadialGradient(x, y, 0, x, y, r);
+    gradient.addColorStop(0, `rgba(${rgb}, 0.45)`); gradient.addColorStop(1, `rgba(${rgb}, 0)`);
+    context.fillStyle = gradient; context.fillRect(x - r, y - r, r * 2, r * 2);
+  }
+  context.restore();
+}
+
+/** Qué siluetas lleva cada tema. */
+const FOREGROUND_PAINTERS = {
+  madrid(context, random, dark) { lampPosts(context, dark); bunting(context, dark); foliageBottom(context, random, dark, { count: 14, height: 18 }); },
+  benidorm(context, random, dark) { foliageTop(context, random, dark, { count: 5, length: 44 }); foliageBottom(context, random, dark, { count: 12, height: 22, wide: true }); },
+  sevilla(context, random, dark) { bunting(context, dark, 8, 18); foliageBottom(context, random, dark, { count: 14, height: 20 }); floatingLights(context, random, '255, 190, 90', 14); },
+  pamplona(context, random, dark) { bunting(context, dark, 4, 10); foliageBottom(context, random, dark, { count: 18, height: 16 }); },
+  metro(context, random, dark) { pipesTop(context, random, dark); stalactites(context, random, dark, { top: false, bottom: false }); },
+  galicia(context, random, dark) { foliageTop(context, random, dark, { count: 9, length: 38 }); foliageBottom(context, random, dark, { count: 26, height: 30, wide: true }); },
+  valencia(context, random, dark) { bunting(context, dark, 4, 12); foliageBottom(context, random, dark, { count: 12, height: 16 }); floatingLights(context, random, '255, 120, 200', 16); },
+  mancha(context, random, dark) { foliageBottom(context, random, dark, { count: 22, height: 24 }); floatingLights(context, random, '170, 200, 255', 22); },
+  canarias(context, random, dark) { foliageTop(context, random, dark, { count: 5, length: 30 }); foliageBottom(context, random, dark, { count: 14, height: 26, wide: true }); floatingLights(context, random, '255, 150, 60', 26); },
+  hacienda(context, random, dark) { pipesTop(context, random, dark); floatingLights(context, random, '255, 160, 90', 16); },
+  taberna(context, random, dark) { lampPosts(context, dark, 200); floatingLights(context, random, '255, 190, 100', 12); },
+  bodega(context, random, dark) { pipesTop(context, random, dark); floatingLights(context, random, '200, 130, 255', 14); },
+  gruta(context, random, dark) { stalactites(context, random, dark); floatingLights(context, random, '120, 255, 230', 26); }
+};
+
+/**
+ * Crea la capa de primer plano de un tema.
+ * @param {import('../world/themes.js').Theme} theme
+ * @param {() => number} random
+ * @returns {HTMLCanvasElement}
+ */
+function createForegroundLayer(theme, random) {
+  const dark = mix(theme.skyColors[2], '#000000', 0.88);
+  return createCanvas(Math.round(W * FOREGROUND_SCALE), Math.round(SCREEN_HEIGHT * FOREGROUND_SCALE), context => {
+    context.scale(FOREGROUND_SCALE, FOREGROUND_SCALE);
+    context.imageSmoothingEnabled = true;
+    FOREGROUND_PAINTERS[theme.name](context, random, dark);
+    // Se desvanece un poco hacia el centro para no tapar la acción.
+    context.globalCompositeOperation = 'destination-out';
+    context.fillStyle = linearGradient(context, 0, 0, 0, SCREEN_HEIGHT, [[0, 'rgba(0,0,0,0)'], [0.22, 'rgba(0,0,0,0)'], [0.38, 'rgba(0,0,0,1)'], [0.7, 'rgba(0,0,0,1)'], [0.86, 'rgba(0,0,0,0)'], [1, 'rgba(0,0,0,0)']]);
+    context.fillRect(0, 0, W, SCREEN_HEIGHT);
+  });
+}
+return { FOREGROUND_SCALE, createForegroundLayer };
+})();
+
 // ─── src/graphics/backgroundImages.js ───
 const __module_src_graphics_backgroundImages_js = (() => {
 /**
@@ -8388,6 +8544,7 @@ const { createCanvas } = __module_src_core_canvas_js;
 const { createSeededRandom } = __module_src_core_math_js;
 const { BACKGROUND_LAYER_WIDTH } = __module_src_graphics_backgroundConstants_js;
 const { CITY_PAINTERS } = __module_src_graphics_cityBackgrounds_js;
+const { createForegroundLayer } = __module_src_graphics_foregroundArt_js;
 const { linearGradient, glow, mix, shade, softCloud, TAU } = __module_src_graphics_backgroundKit_js;
 
 /** Crea una capa transparente cuyo contexto ya está ampliado. */
@@ -8449,6 +8606,7 @@ function createCloudLayer(theme, random) {
  * @property {HTMLCanvasElement} farLayer
  * @property {HTMLCanvasElement} midLayer
  * @property {HTMLCanvasElement} nearLayer
+ * @property {HTMLCanvasElement} frontLayer Siluetas desenfocadas que pasan por delante (media resolución).
  */
 
 /**
@@ -8466,7 +8624,7 @@ function createBackgroundImages(theme) {
     context.scale(RENDER_SCALE, RENDER_SCALE);
     paintSky(context, theme, random);
   });
-  return { sky, cloudLayer: theme.hasClouds ? createCloudLayer(theme, random) : null, farLayer: far.canvas, midLayer: mid.canvas, nearLayer: near.canvas };
+  return { sky, cloudLayer: theme.hasClouds ? createCloudLayer(theme, random) : null, farLayer: far.canvas, midLayer: mid.canvas, nearLayer: near.canvas, frontLayer: createForegroundLayer(theme, random) };
 }
 return { createBackgroundImages };
 })();
@@ -12603,6 +12761,24 @@ const STEPS_PER_TILE_FRAME = 8;
 const STANDING_ROW = GROUND_TOP_ROW - 1;
 
 /**
+ * Dibuja el primer plano: siluetas desenfocadas que pasan por delante de todo,
+ * más deprisa que el suelo.
+ * @param {CanvasRenderingContext2D} context
+ * @param {import('../graphics/backgroundImages.js').BackgroundImages} backgroundImages
+ * @param {number} cameraX
+ */
+function drawForeground(context, backgroundImages, cameraX) {
+  if (!backgroundImages.frontLayer) return;
+  const offset = -(((cameraX * PARALLAX_FACTORS.frontLayer) % BACKGROUND_LAYER_WIDTH) * RENDER_SCALE | 0) / RENDER_SCALE;
+  context.save();
+  context.imageSmoothingEnabled = true;
+  context.globalAlpha = 0.92;
+  context.drawImage(backgroundImages.frontLayer, offset, 0, BACKGROUND_LAYER_WIDTH, SCREEN_HEIGHT);
+  context.drawImage(backgroundImages.frontLayer, offset + BACKGROUND_LAYER_WIDTH, 0, BACKGROUND_LAYER_WIDTH, SCREEN_HEIGHT);
+  context.restore();
+}
+
+/**
  * Dibuja una capa del fondo repetida en horizontal con desplazamiento parallax.
  * @param {CanvasRenderingContext2D} context Dónde dibujar.
  * @param {HTMLCanvasElement} layerImage Capa en alta resolución.
@@ -13183,7 +13359,7 @@ function drawRain(context, rainDrops) {
   context.fillStyle = '#b8d0ec';
   for (const drop of rainDrops) context.fillRect(Math.round(drop.x), Math.round(drop.y), 1, 4);
 }
-return { drawBackground, drawTileLayer, drawDecorations, drawShadows, drawLighting, drawTorches, drawRain };
+return { drawForeground, drawBackground, drawTileLayer, drawDecorations, drawShadows, drawLighting, drawTorches, drawRain };
 })();
 
 // ─── src/game/hud.js ───
@@ -13241,21 +13417,27 @@ function drawHud(context, { session, levelNumber, levelName, timeRemaining, step
   drawCollectibleCounters(context, { hasSeed, bigCoins, bigCoinTotal });
 }
 
-/** Contadores de la Semilla Maravilla y de las monedas gigantes del nivel. */
-function drawCollectibleCounters(context, { hasSeed, bigCoins, bigCoinTotal }) {
+/**
+ * Contadores de la Semilla Maravilla y de las monedas gigantes del nivel.
+ * @param {CanvasRenderingContext2D} context
+ * @param {{hasSeed: boolean, bigCoins: number, bigCoinTotal: number}} status
+ * @param {number} [x] Centro de la semilla.
+ * @param {number} [y] Altura del centro de los iconos.
+ */
+function drawCollectibleCounters(context, { hasSeed, bigCoins, bigCoinTotal }, x = 17, y = 28.5) {
   // Semilla Maravilla.
-  outlinedCircle(context, 17, 28.5, 3.6, hasSeed ? '#fff6a8' : '#8a8498', hasSeed ? '#e8a810' : '#4a4658', 0.7);
-  if (hasSeed) sparkle(context, 17, 28.5, 2.6, '#ffffff');
-  else { context.strokeStyle = OUTLINE_COLOR; context.lineWidth = 0.5; context.setLineDash([1, 1]); context.beginPath(); context.arc(17, 28.5, 2, 0, Math.PI * 2); context.stroke(); context.setLineDash([]); }
-  drawText(context, hasSeed ? '1/1' : '0/1', 23, 26, hasSeed ? '#ffe45a' : '#c8c4d8', STYLE);
+  outlinedCircle(context, x, y, 3.6, hasSeed ? '#fff6a8' : '#8a8498', hasSeed ? '#e8a810' : '#4a4658', 0.7);
+  if (hasSeed) sparkle(context, x, y, 2.6, '#ffffff');
+  else { context.strokeStyle = OUTLINE_COLOR; context.lineWidth = 0.5; context.setLineDash([1, 1]); context.beginPath(); context.arc(x, y, 2, 0, Math.PI * 2); context.stroke(); context.setLineDash([]); }
+  drawText(context, hasSeed ? '1/1' : '0/1', x + 6, y - 2.5, hasSeed ? '#ffe45a' : '#c8c4d8', STYLE);
   // Monedas gigantes.
   for (let coin = 0; coin < bigCoinTotal; coin++) {
     const owned = coin < bigCoins;
-    outlinedCircle(context, 52 + coin * 9, 28.5, 3.3, owned ? '#ffc0f4' : '#8a8498', owned ? '#b02aa8' : '#4a4658', 0.7);
-    if (owned) sparkle(context, 52 + coin * 9, 28.5, 2.2, '#ffffff');
+    outlinedCircle(context, x + 35 + coin * 9, y, 3.3, owned ? '#ffc0f4' : '#8a8498', owned ? '#b02aa8' : '#4a4658', 0.7);
+    if (owned) sparkle(context, x + 35 + coin * 9, y, 2.2, '#ffffff');
   }
 }
-return { drawHud };
+return { drawHud, drawCollectibleCounters };
 })();
 
 // ─── src/entities/wonder/StampedeBull.js ───
@@ -13750,7 +13932,7 @@ const { FallingCoin } = __module_src_entities_wonder_FallingCoin_js;
 const { createEntityForSpawnPoint, spawnsAheadOfCamera, isEnemySpawn } = __module_src_game_entityFactory_js;
 const { handlePlayerHeadBump } = __module_src_game_blockInteractions_js;
 const { GoalSequence } = __module_src_game_GoalSequence_js;
-const { drawBackground, drawDecorations, drawTileLayer, drawRain, drawShadows, drawLighting, drawTorches } = __module_src_game_worldRenderer_js;
+const { drawBackground, drawDecorations, drawTileLayer, drawRain, drawShadows, drawLighting, drawTorches, drawForeground } = __module_src_game_worldRenderer_js;
 const { drawHud } = __module_src_game_hud_js;
 const { WonderDirector } = __module_src_game_WonderDirector_js;
 const { AreaManager } = __module_src_game_AreaManager_js;
@@ -14509,6 +14691,7 @@ class World {
     for (const entity of this.entities) if (!entity.drawsBehindTiles) entity.draw(context, cameraX);
     this.player.draw(context, cameraX);
     for (const effect of this.visualEffects) effect.draw(context, cameraX);
+    drawForeground(context, backgroundImages, cameraX);
     if (this.theme.hasRain) drawRain(context, this.rainDrops);
     this.drawAtmosphere(context, cameraX);
 
@@ -14668,6 +14851,8 @@ class TitleScreen {
     this.taglineIndex = 0;
     const progress = loadProgress();
     this.highScore = progress.highScore;
+    this.savedSeeds = (progress.seeds || []).length;
+    this.savedBigCoins = (progress.bigCoins || []).length;
     this.highestUnlockedLevel = Math.min(progress.highestUnlockedLevel, LEVELS.length - 1);
     this.continueLevelIndex = this.highestUnlockedLevel;
     this.chefCodeTracker = createSecretCodeTracker(CHEF_CODE);
@@ -14774,7 +14959,7 @@ class TitleScreen {
     drawText(context, 'SÚPER PACO', 0, -10, '#e4162f', { align: 'center', scale: 3, outlineColor: '#140c20' });
     context.restore();
     drawText(context, 'LA TORTILLA PERDIDA', SCREEN_WIDTH / 2, 94, '#ffffff', { align: 'center', scale: 2, outlineColor: '#140c20' });
-    drawText(context, `RÉCORD ${String(this.highScore).padStart(6, '0')}`, SCREEN_WIDTH / 2, 116, '#ffd84a', { align: 'center', outlineColor: '#140c20' });
+    drawText(context, `RÉCORD ${String(this.highScore).padStart(6, '0')}   SEMILLAS ${this.savedSeeds}/${LEVELS.length}   MONEDAS ${this.savedBigCoins}/${LEVELS.length * 3}`, SCREEN_WIDTH / 2, 116, '#ffd84a', { align: 'center', outlineColor: '#140c20' });
   }
 
   /** @private */
@@ -14938,6 +15123,10 @@ const { pacoSpriteName } = __module_src_graphics_spriteData_js;
 const { drawText } = __module_src_graphics_font_js;
 const { drawBackdrop, drawPanel } = __module_src_graphics_uiKit_js;
 const { THEMES } = __module_src_world_themes_js;
+const { drawCollectibleCounters } = __module_src_game_hud_js;
+
+/** Todos los niveles tienen tres monedas gigantes. */
+const BIG_COINS_PER_LEVEL = 3;
 const { LEVELS } = __module_src_world_levels_js;
 
 /** Pasos que se muestra antes de empezar el nivel automáticamente. */
@@ -14976,7 +15165,13 @@ class LevelIntroScreen {
     const bob = Math.abs(Math.sin(this.stepCounter / 7)) * 2;
     drawSprite(context, SPRITES[pacoSpriteName('small', `run${(Math.floor(this.stepCounter / 3) % 8) + 1}`, 'normal')], 126, 147 - bob);
     drawText(context, `×  ${this.session.lives}`, 152, 151, '#ffffff', { shadowColor: '#140c20', scale: 2 });
-    drawText(context, `PUNTOS ${String(this.session.score).padStart(6, '0')}`, SCREEN_WIDTH / 2, 196, '#c8c8e0', { align: 'center', shadowColor: '#140c20' });
+    drawText(context, 'EN ESTE NIVEL', SCREEN_WIDTH / 2, 178, '#c8c8e0', { align: 'center', shadowColor: '#140c20' });
+    drawCollectibleCounters(context, {
+      hasSeed: this.session.seeds.has(this.session.levelIndex),
+      bigCoins: this.session.countBigCoinsInLevel(this.session.levelIndex),
+      bigCoinTotal: BIG_COINS_PER_LEVEL
+    }, SCREEN_WIDTH / 2 - 26, 198);
+    drawText(context, `PUNTOS ${String(this.session.score).padStart(6, '0')}`, SCREEN_WIDTH / 2, 214, '#c8c8e0', { align: 'center', shadowColor: '#140c20' });
   }
 }
 return { LevelIntroScreen };
@@ -15199,6 +15394,10 @@ class EndingScreen {
     drawText(context, `PUNTOS ${String(this.finalScore).padStart(6, '0')}`, SCREEN_WIDTH / 2, 92, '#fcfcfc', { align: 'center' });
     drawText(context, ENDING_TEXTS.thanksForPlaying, SCREEN_WIDTH / 2, 120, '#fcfcfc', { align: 'center', scale: 2 });
     drawText(context, ENDING_TEXTS.farewell, SCREEN_WIDTH / 2, 150, '#8cc8fc', { align: 'center' });
+    const seedCount = this.game.session.seeds.size;
+    drawText(context, `SEMILLAS MARAVILLA ${seedCount}/10   MONEDAS GIGANTES ${this.game.session.bigCoins.size}/30`, SCREEN_WIDTH / 2, 196, '#ff9aff', { align: 'center', outlineColor: '#140c20' });
+    if (seedCount >= 10) drawText(context, '¡TORTILLA DORADA! ERES UN MAESTRO COCINERO', SCREEN_WIDTH / 2, 208, '#ffe45a', { align: 'center', outlineColor: '#140c20' });
+    else drawText(context, 'BUSCA LAS FLORES BRILLANTES PARA LA TORTILLA DORADA', SCREEN_WIDTH / 2, 208, '#c8c8e0', { align: 'center', outlineColor: '#140c20' });
     drawSprite(context, SPRITES.tortilla, 152, 170);
   }
 }

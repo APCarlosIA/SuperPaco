@@ -35,7 +35,7 @@ import { FallingCoin } from '../entities/wonder/FallingCoin.js';
 import { createEntityForSpawnPoint, spawnsAheadOfCamera, isEnemySpawn } from './entityFactory.js';
 import { handlePlayerHeadBump } from './blockInteractions.js';
 import { GoalSequence } from './GoalSequence.js';
-import { drawBackground, drawDecorations, drawTileLayer, drawRain, drawShadows, drawLighting, drawTorches } from './worldRenderer.js';
+import { drawBackground, drawDecorations, drawTileLayer, drawRain, drawShadows, drawLighting, drawTorches, drawForeground } from './worldRenderer.js';
 import { drawHud } from './hud.js';
 import { WonderDirector } from './WonderDirector.js';
 import { AreaManager } from './AreaManager.js';
@@ -794,6 +794,7 @@ export class World {
     for (const entity of this.entities) if (!entity.drawsBehindTiles) entity.draw(context, cameraX);
     this.player.draw(context, cameraX);
     for (const effect of this.visualEffects) effect.draw(context, cameraX);
+    drawForeground(context, backgroundImages, cameraX);
     if (this.theme.hasRain) drawRain(context, this.rainDrops);
     this.drawAtmosphere(context, cameraX);
 

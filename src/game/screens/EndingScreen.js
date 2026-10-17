@@ -166,6 +166,10 @@ export class EndingScreen {
     drawText(context, `PUNTOS ${String(this.finalScore).padStart(6, '0')}`, SCREEN_WIDTH / 2, 92, '#fcfcfc', { align: 'center' });
     drawText(context, ENDING_TEXTS.thanksForPlaying, SCREEN_WIDTH / 2, 120, '#fcfcfc', { align: 'center', scale: 2 });
     drawText(context, ENDING_TEXTS.farewell, SCREEN_WIDTH / 2, 150, '#8cc8fc', { align: 'center' });
+    const seedCount = this.game.session.seeds.size;
+    drawText(context, `SEMILLAS MARAVILLA ${seedCount}/10   MONEDAS GIGANTES ${this.game.session.bigCoins.size}/30`, SCREEN_WIDTH / 2, 196, '#ff9aff', { align: 'center', outlineColor: '#140c20' });
+    if (seedCount >= 10) drawText(context, '¡TORTILLA DORADA! ERES UN MAESTRO COCINERO', SCREEN_WIDTH / 2, 208, '#ffe45a', { align: 'center', outlineColor: '#140c20' });
+    else drawText(context, 'BUSCA LAS FLORES BRILLANTES PARA LA TORTILLA DORADA', SCREEN_WIDTH / 2, 208, '#c8c8e0', { align: 'center', outlineColor: '#140c20' });
     drawSprite(context, SPRITES.tortilla, 152, 170);
   }
 }

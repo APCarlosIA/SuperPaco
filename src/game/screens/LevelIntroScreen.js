@@ -8,6 +8,10 @@ import { pacoSpriteName } from '../../graphics/spriteData.js';
 import { drawText } from '../../graphics/font.js';
 import { drawBackdrop, drawPanel } from '../../graphics/uiKit.js';
 import { THEMES } from '../../world/themes.js';
+import { drawCollectibleCounters } from '../hud.js';
+
+/** Todos los niveles tienen tres monedas gigantes. */
+const BIG_COINS_PER_LEVEL = 3;
 import { LEVELS } from '../../world/levels.js';
 
 /** Pasos que se muestra antes de empezar el nivel automáticamente. */
@@ -46,6 +50,12 @@ export class LevelIntroScreen {
     const bob = Math.abs(Math.sin(this.stepCounter / 7)) * 2;
     drawSprite(context, SPRITES[pacoSpriteName('small', `run${(Math.floor(this.stepCounter / 3) % 8) + 1}`, 'normal')], 126, 147 - bob);
     drawText(context, `×  ${this.session.lives}`, 152, 151, '#ffffff', { shadowColor: '#140c20', scale: 2 });
-    drawText(context, `PUNTOS ${String(this.session.score).padStart(6, '0')}`, SCREEN_WIDTH / 2, 196, '#c8c8e0', { align: 'center', shadowColor: '#140c20' });
+    drawText(context, 'EN ESTE NIVEL', SCREEN_WIDTH / 2, 178, '#c8c8e0', { align: 'center', shadowColor: '#140c20' });
+    drawCollectibleCounters(context, {
+      hasSeed: this.session.seeds.has(this.session.levelIndex),
+      bigCoins: this.session.countBigCoinsInLevel(this.session.levelIndex),
+      bigCoinTotal: BIG_COINS_PER_LEVEL
+    }, SCREEN_WIDTH / 2 - 26, 198);
+    drawText(context, `PUNTOS ${String(this.session.score).padStart(6, '0')}`, SCREEN_WIDTH / 2, 214, '#c8c8e0', { align: 'center', shadowColor: '#140c20' });
   }
 }

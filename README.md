@@ -125,7 +125,7 @@ para jugar basta el navegador). La única dependencia es ESLint, para desarrollo
 npm install     # instala ESLint (solo la primera vez)
 npm run dev     # servidor en http://localhost:8080 (recarga el navegador tras editar)
 npm run lint    # análisis estático: variables sin definir, importaciones sin usar…
-npm test        # 99 tests automáticos (tardan menos de un segundo)
+npm test        # 118 tests automáticos (tardan menos de un segundo)
 npm run build   # genera dist/SuperPaco.html
 npm run check   # todo lo anterior seguido: úsalo antes de dar un cambio por bueno
 ```
@@ -156,6 +156,18 @@ no depende de la pantalla (ver la arquitectura más abajo).
 Lo que **no** comprueban los tests (hay que mirarlo a mano): el dibujo en
 pantalla, el sonido, la sensación de control, el táctil y el mando, y otros
 navegadores.
+
+## Niveles estilo Wonder
+
+Cada uno de los 10 niveles tiene:
+
+- **Flor Maravilla:** al tocarla el tramo cambia (luna, lluvia de pesetas, ritmo,
+  estampida, oscuridad, desfile) hasta que sale la **Semilla Maravilla**.
+- **3 monedas gigantes**, una de ellas en una **sala secreta** (alcantarilla o
+  puerta; `src/world/rooms.js`).
+- **Personajes con chistes** (`talker`) y cameos (oso, gato, Quijote, Sancho, bailaora).
+- Un sector final con salientes y colinas, y una capa de primer plano desenfocada.
+- Código secreto en el título: ↑ ↑ ↓ ↓ ← → ← → CORRER SALTAR = modo chef.
 
 ## Cómo se dibuja
 

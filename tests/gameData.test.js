@@ -120,3 +120,18 @@ for (const [levelIndex, definition] of LEVELS.entries()) {
     assert.ok(widestGap <= MAX_UNAIDED_GAP, `hay un hueco de ${widestGap} columnas`);
   });
 }
+
+for (const [levelIndex, definition] of LEVELS.entries()) {
+  test(`nivel ${levelIndex + 1} (${definition.name}): tiene Flor Maravilla, 3 monedas gigantes y salas con salida`, () => {
+    const level = definition.build();
+    const spawns = kind => level.spawnPoints.filter(spawn => spawn.kind === kind);
+    assert.equal(spawns('wonderFlower').length, 1, 'debe tener una Flor Maravilla');
+    assert.equal(level.bigCoinCount, 3, 'debe tener 3 monedas gigantes');
+    const doorRooms = new Set(spawns('door').filter(door => door.settings.direction === 'enter').map(door => door.settings.roomId));
+    assert.deepEqual([...doorRooms].sort(), Object.keys(level.roomBuilders).sort(), 'puertas y salas no coinciden');
+    for (const buildRoom of Object.values(level.roomBuilders)) {
+      const room = buildRoom();
+      assert.ok(room.spawnPoints.some(spawn => spawn.kind === 'door' && spawn.settings.direction === 'exit'), 'la sala no tiene puerta de salida');
+    }
+  });
+}

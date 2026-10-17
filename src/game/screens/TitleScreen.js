@@ -37,6 +37,8 @@ export class TitleScreen {
     this.taglineIndex = 0;
     const progress = loadProgress();
     this.highScore = progress.highScore;
+    this.savedSeeds = (progress.seeds || []).length;
+    this.savedBigCoins = (progress.bigCoins || []).length;
     this.highestUnlockedLevel = Math.min(progress.highestUnlockedLevel, LEVELS.length - 1);
     this.continueLevelIndex = this.highestUnlockedLevel;
     this.chefCodeTracker = createSecretCodeTracker(CHEF_CODE);
@@ -143,7 +145,7 @@ export class TitleScreen {
     drawText(context, 'SÚPER PACO', 0, -10, '#e4162f', { align: 'center', scale: 3, outlineColor: '#140c20' });
     context.restore();
     drawText(context, 'LA TORTILLA PERDIDA', SCREEN_WIDTH / 2, 94, '#ffffff', { align: 'center', scale: 2, outlineColor: '#140c20' });
-    drawText(context, `RÉCORD ${String(this.highScore).padStart(6, '0')}`, SCREEN_WIDTH / 2, 116, '#ffd84a', { align: 'center', outlineColor: '#140c20' });
+    drawText(context, `RÉCORD ${String(this.highScore).padStart(6, '0')}   SEMILLAS ${this.savedSeeds}/${LEVELS.length}   MONEDAS ${this.savedBigCoins}/${LEVELS.length * 3}`, SCREEN_WIDTH / 2, 116, '#ffd84a', { align: 'center', outlineColor: '#140c20' });
   }
 
   /** @private */

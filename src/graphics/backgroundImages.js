@@ -14,6 +14,7 @@ import { createCanvas } from '../core/canvas.js';
 import { createSeededRandom } from '../core/math.js';
 import { BACKGROUND_LAYER_WIDTH } from './backgroundConstants.js';
 import { CITY_PAINTERS } from './cityBackgrounds.js';
+import { createForegroundLayer } from './foregroundArt.js';
 import { linearGradient, glow, mix, shade, softCloud, TAU } from './backgroundKit.js';
 
 /** Crea una capa transparente cuyo contexto ya está ampliado. */
@@ -75,6 +76,7 @@ function createCloudLayer(theme, random) {
  * @property {HTMLCanvasElement} farLayer
  * @property {HTMLCanvasElement} midLayer
  * @property {HTMLCanvasElement} nearLayer
+ * @property {HTMLCanvasElement} frontLayer Siluetas desenfocadas que pasan por delante (media resolución).
  */
 
 /**
@@ -92,5 +94,5 @@ export function createBackgroundImages(theme) {
     context.scale(RENDER_SCALE, RENDER_SCALE);
     paintSky(context, theme, random);
   });
-  return { sky, cloudLayer: theme.hasClouds ? createCloudLayer(theme, random) : null, farLayer: far.canvas, midLayer: mid.canvas, nearLayer: near.canvas };
+  return { sky, cloudLayer: theme.hasClouds ? createCloudLayer(theme, random) : null, farLayer: far.canvas, midLayer: mid.canvas, nearLayer: near.canvas, frontLayer: createForegroundLayer(theme, random) };
 }

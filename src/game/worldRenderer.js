@@ -27,6 +27,24 @@ const STEPS_PER_TILE_FRAME = 8;
 const STANDING_ROW = GROUND_TOP_ROW - 1;
 
 /**
+ * Dibuja el primer plano: siluetas desenfocadas que pasan por delante de todo,
+ * más deprisa que el suelo.
+ * @param {CanvasRenderingContext2D} context
+ * @param {import('../graphics/backgroundImages.js').BackgroundImages} backgroundImages
+ * @param {number} cameraX
+ */
+export function drawForeground(context, backgroundImages, cameraX) {
+  if (!backgroundImages.frontLayer) return;
+  const offset = -(((cameraX * PARALLAX_FACTORS.frontLayer) % BACKGROUND_LAYER_WIDTH) * RENDER_SCALE | 0) / RENDER_SCALE;
+  context.save();
+  context.imageSmoothingEnabled = true;
+  context.globalAlpha = 0.92;
+  context.drawImage(backgroundImages.frontLayer, offset, 0, BACKGROUND_LAYER_WIDTH, SCREEN_HEIGHT);
+  context.drawImage(backgroundImages.frontLayer, offset + BACKGROUND_LAYER_WIDTH, 0, BACKGROUND_LAYER_WIDTH, SCREEN_HEIGHT);
+  context.restore();
+}
+
+/**
  * Dibuja una capa del fondo repetida en horizontal con desplazamiento parallax.
  * @param {CanvasRenderingContext2D} context Dónde dibujar.
  * @param {HTMLCanvasElement} layerImage Capa en alta resolución.

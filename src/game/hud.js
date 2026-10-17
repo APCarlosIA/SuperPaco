@@ -51,17 +51,23 @@ export function drawHud(context, { session, levelNumber, levelName, timeRemainin
   drawCollectibleCounters(context, { hasSeed, bigCoins, bigCoinTotal });
 }
 
-/** Contadores de la Semilla Maravilla y de las monedas gigantes del nivel. */
-function drawCollectibleCounters(context, { hasSeed, bigCoins, bigCoinTotal }) {
+/**
+ * Contadores de la Semilla Maravilla y de las monedas gigantes del nivel.
+ * @param {CanvasRenderingContext2D} context
+ * @param {{hasSeed: boolean, bigCoins: number, bigCoinTotal: number}} status
+ * @param {number} [x] Centro de la semilla.
+ * @param {number} [y] Altura del centro de los iconos.
+ */
+export function drawCollectibleCounters(context, { hasSeed, bigCoins, bigCoinTotal }, x = 17, y = 28.5) {
   // Semilla Maravilla.
-  outlinedCircle(context, 17, 28.5, 3.6, hasSeed ? '#fff6a8' : '#8a8498', hasSeed ? '#e8a810' : '#4a4658', 0.7);
-  if (hasSeed) sparkle(context, 17, 28.5, 2.6, '#ffffff');
-  else { context.strokeStyle = OUTLINE_COLOR; context.lineWidth = 0.5; context.setLineDash([1, 1]); context.beginPath(); context.arc(17, 28.5, 2, 0, Math.PI * 2); context.stroke(); context.setLineDash([]); }
-  drawText(context, hasSeed ? '1/1' : '0/1', 23, 26, hasSeed ? '#ffe45a' : '#c8c4d8', STYLE);
+  outlinedCircle(context, x, y, 3.6, hasSeed ? '#fff6a8' : '#8a8498', hasSeed ? '#e8a810' : '#4a4658', 0.7);
+  if (hasSeed) sparkle(context, x, y, 2.6, '#ffffff');
+  else { context.strokeStyle = OUTLINE_COLOR; context.lineWidth = 0.5; context.setLineDash([1, 1]); context.beginPath(); context.arc(x, y, 2, 0, Math.PI * 2); context.stroke(); context.setLineDash([]); }
+  drawText(context, hasSeed ? '1/1' : '0/1', x + 6, y - 2.5, hasSeed ? '#ffe45a' : '#c8c4d8', STYLE);
   // Monedas gigantes.
   for (let coin = 0; coin < bigCoinTotal; coin++) {
     const owned = coin < bigCoins;
-    outlinedCircle(context, 52 + coin * 9, 28.5, 3.3, owned ? '#ffc0f4' : '#8a8498', owned ? '#b02aa8' : '#4a4658', 0.7);
-    if (owned) sparkle(context, 52 + coin * 9, 28.5, 2.2, '#ffffff');
+    outlinedCircle(context, x + 35 + coin * 9, y, 3.3, owned ? '#ffc0f4' : '#8a8498', owned ? '#b02aa8' : '#4a4658', 0.7);
+    if (owned) sparkle(context, x + 35 + coin * 9, y, 2.2, '#ffffff');
   }
 }
