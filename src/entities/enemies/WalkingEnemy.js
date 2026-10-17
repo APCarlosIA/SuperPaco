@@ -42,7 +42,7 @@ export class WalkingEnemy extends Enemy {
   draw(context, cameraX) {
     const spriteName = this.squashedStepsLeft > 0
       ? `${this.profile.spriteName}_squashed`
-      : `${this.profile.spriteName}_frame${this.getAnimationFrame()}`;
+      : this.getFrameName(this.profile.spriteName, 6);
     // Los sprites de enemigos miran a la izquierda: se reflejan al ir a la derecha.
     this.drawCenteredSprite(context, spriteName, cameraX, { mirrored: this.facing > 0 });
   }

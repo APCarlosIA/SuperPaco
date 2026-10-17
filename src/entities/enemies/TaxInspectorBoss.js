@@ -177,7 +177,7 @@ export class TaxInspectorBoss extends Enemy {
     const isBlinking = this.invulnerableSteps > 0 && (this.invulnerableSteps >> 2) % 2 === 0 && !this.isDefeated;
     if (isBlinking) return;
     const looksHurt = this.isDefeated || this.invulnerableSteps > INVULNERABLE_STEPS_AFTER_STOMP - 20;
-    const spriteName = looksHurt ? 'hacienda_hurt' : `hacienda_frame${this.getAnimationFrame()}`;
+    const spriteName = looksHurt ? 'hacienda_hurt' : this.getFrameName('hacienda', 12);
     // Siempre mira hacia Paco (el sprite original mira a la izquierda).
     const sprite = SPRITES[spriteName];
     drawSprite(context, sprite, this.centerX - 16 - cameraX, this.bottom - sprite.height, { mirrored: !this.isFacingPlayerOnLeft, upsideDown: this.isDefeated });

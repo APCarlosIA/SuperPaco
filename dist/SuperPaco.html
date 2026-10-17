@@ -2936,6 +2936,1121 @@ function createPacoSprite(size, pose, variant) {
 return { PACO_PADDING, PACO_PALETTES, PACO_POSES, createPacoSprite };
 })();
 
+// ─── src/graphics/shapes.js ───
+const __module_src_graphics_shapes_js = (() => {
+/**
+ * @file Formas vectoriales con contorno oscuro y degradado, y resplandores
+ * aditivos. Las usan los decorados, enemigos y efectos para tener todos el
+ * mismo aspecto de dibujo animado.
+ */
+const { OUTLINE_COLOR } = __module_src_graphics_hd_js;
+
+/** Camino de un rectángulo con esquinas redondeadas (compatible con navegadores sin roundRect). */
+function roundedPath(context, x, y, width, height, radius) {
+  context.beginPath();
+  if (context.roundRect) context.roundRect(x, y, width, height, radius);
+  else context.rect(x, y, width, height);
+}
+
+/**
+ * Rellena el camino actual con un degradado vertical y le dibuja el contorno oscuro.
+ * @param {CanvasRenderingContext2D} context
+ * @param {string} topColor
+ * @param {string} bottomColor
+ * @param {number} top Altura donde empieza el degradado.
+ * @param {number} bottom Altura donde termina.
+ * @param {number} [lineWidth]
+ */
+function fillWithOutline(context, topColor, bottomColor, top, bottom, lineWidth = 0.8) {
+  const gradient = context.createLinearGradient(0, top, 0, bottom);
+  gradient.addColorStop(0, topColor);
+  gradient.addColorStop(1, bottomColor);
+  context.fillStyle = gradient;
+  context.fill();
+  context.strokeStyle = OUTLINE_COLOR;
+  context.lineWidth = lineWidth;
+  context.lineJoin = 'round';
+  context.stroke();
+}
+
+/** Círculo con degradado y contorno. */
+function outlinedCircle(context, x, y, radius, topColor, bottomColor, lineWidth = 0.8) {
+  context.beginPath();
+  context.arc(x, y, radius, 0, Math.PI * 2);
+  fillWithOutline(context, topColor, bottomColor, y - radius, y + radius, lineWidth);
+}
+
+/**
+ * Resplandor aditivo circular.
+ * @param {CanvasRenderingContext2D} context
+ * @param {number} x
+ * @param {number} y
+ * @param {number} radius
+ * @param {string} rgb Componentes "r, g, b" del color.
+ * @param {number} intensity Opacidad en el centro (0 a 1).
+ */
+function addGlow(context, x, y, radius, rgb, intensity) {
+  context.save();
+  context.globalCompositeOperation = 'lighter';
+  const gradient = context.createRadialGradient(x, y, 0, x, y, radius);
+  gradient.addColorStop(0, `rgba(${rgb}, ${intensity})`);
+  gradient.addColorStop(1, `rgba(${rgb}, 0)`);
+  context.fillStyle = gradient;
+  context.fillRect(x - radius, y - radius, radius * 2, radius * 2);
+  context.restore();
+}
+return { roundedPath, fillWithOutline, outlinedCircle, addGlow };
+})();
+
+// ─── src/graphics/creatureKit.js ───
+const __module_src_graphics_creatureKit_js = (() => {
+/**
+ * @file Herramientas para dibujar criaturas y objetos con formas vectoriales
+ * en alta resolución: tubos para brazos y patas, ojos expresivos, elipses con
+ * luz y sombra, y el generador de sprites con contorno grueso.
+ *
+ * Las coordenadas se dan en píxeles lógicos con el origen en la esquina
+ * superior izquierda de la caja del personaje y los pies en la última fila.
+ */
+const { RENDER_SCALE } = __module_src_config_constants_js;
+const { createCanvas } = __module_src_core_canvas_js;
+const { addOutline, applyAmbientGradient, OUTLINE_COLOR } = __module_src_graphics_hd_js;
+const { roundedPath } = __module_src_graphics_shapes_js;
+
+const TAU = Math.PI * 2;
+
+/** Margen (px lógicos) que se deja alrededor de cada criatura para alas, antenas y contorno. */
+const CREATURE_PADDING = 4;
+
+/** Aclara (amount > 0) u oscurece (amount < 0) un color `#rrggbb`. */
+function tone(color, amount) {
+  const rgbMatch = /^rgb\((\d+),\s*(\d+),\s*(\d+)\)$/.exec(color);
+  const channels = rgbMatch
+    ? [Number(rgbMatch[1]), Number(rgbMatch[2]), Number(rgbMatch[3])]
+    : [1, 3, 5].map(index => parseInt(color.slice(index, index + 2), 16));
+  const shifted = channels.map(value => Math.round(amount > 0 ? value + (255 - value) * amount : value * (1 + amount)));
+  return `rgb(${shifted.join(',')})`;
+}
+
+/**
+ * Convierte un dibujo en un sprite con contorno grueso y degradado ambiental.
+ * @param {number} width Ancho lógico de la caja.
+ * @param {number} height Alto lógico de la caja.
+ * @param {(context: CanvasRenderingContext2D) => void} paint Pinta en coordenadas lógicas.
+ * @param {{outline?: number, ambient?: boolean}} [options]
+ * @returns {{image: HTMLCanvasElement, padding: number, width: number, height: number}}
+ */
+function createCreatureSprite(width, height, paint, { outline = RENDER_SCALE, ambient = true } = {}) {
+  const raw = createCanvas((width + CREATURE_PADDING * 2) * RENDER_SCALE, (height + CREATURE_PADDING * 2) * RENDER_SCALE, context => {
+    context.scale(RENDER_SCALE, RENDER_SCALE);
+    context.translate(CREATURE_PADDING, CREATURE_PADDING);
+    context.imageSmoothingEnabled = true;
+    context.lineCap = 'round';
+    context.lineJoin = 'round';
+    paint(context);
+  });
+  if (ambient) applyAmbientGradient(raw, 0, raw.height);
+  const outlined = addOutline(raw, outline, OUTLINE_COLOR);
+  return { image: outlined, padding: CREATURE_PADDING + outline / RENDER_SCALE, width, height };
+}
+
+/** Tubo con extremos redondos y sombra inferior (patas, brazos, tentáculos). */
+function tube(context, x1, y1, x2, y2, width, color, darkColor = tone(color, -0.35)) {
+  context.lineCap = 'round';
+  context.strokeStyle = darkColor;
+  context.lineWidth = width;
+  context.beginPath(); context.moveTo(x1, y1); context.lineTo(x2, y2); context.stroke();
+  context.strokeStyle = color;
+  context.lineWidth = width * 0.7;
+  context.beginPath(); context.moveTo(x1 - 0.1, y1 - 0.15); context.lineTo(x2 - 0.1, y2 - 0.15); context.stroke();
+}
+
+/** Curva gruesa con sombra (colas, tentáculos, cuellos). */
+function curveTube(context, points, width, color, darkColor = tone(color, -0.35)) {
+  const trace = () => {
+    context.beginPath();
+    context.moveTo(points[0][0], points[0][1]);
+    for (let index = 1; index < points.length - 1; index++) {
+      const midX = (points[index][0] + points[index + 1][0]) / 2;
+      const midY = (points[index][1] + points[index + 1][1]) / 2;
+      context.quadraticCurveTo(points[index][0], points[index][1], midX, midY);
+    }
+    const last = points[points.length - 1];
+    context.lineTo(last[0], last[1]);
+  };
+  context.lineCap = 'round';
+  context.strokeStyle = darkColor; context.lineWidth = width; trace(); context.stroke();
+  context.strokeStyle = color; context.lineWidth = width * 0.7; trace(); context.stroke();
+}
+
+/** Elipse con degradado radial: luz arriba a la izquierda y sombra abajo a la derecha. */
+function shadedEllipse(context, cx, cy, rx, ry, base, { light = tone(base, 0.4), dark = tone(base, -0.35), rotation = 0 } = {}) {
+  const gradient = context.createRadialGradient(cx - rx * 0.35, cy - ry * 0.4, Math.min(rx, ry) * 0.1, cx, cy, Math.max(rx, ry) * 1.05);
+  gradient.addColorStop(0, light);
+  gradient.addColorStop(0.5, base);
+  gradient.addColorStop(1, dark);
+  context.fillStyle = gradient;
+  context.beginPath();
+  context.ellipse(cx, cy, rx, ry, rotation, 0, TAU);
+  context.fill();
+}
+
+/** Rectángulo redondeado con degradado lateral (torsos, cajas, ropa). */
+function shadedRect(context, x, y, width, height, radius, base, { light = tone(base, 0.25), dark = tone(base, -0.3), vertical = false } = {}) {
+  const gradient = vertical
+    ? context.createLinearGradient(0, y, 0, y + height)
+    : context.createLinearGradient(x, 0, x + width, 0);
+  gradient.addColorStop(0, light);
+  gradient.addColorStop(0.45, base);
+  gradient.addColorStop(1, dark);
+  context.fillStyle = gradient;
+  roundedPath(context, x, y, width, height, radius);
+  context.fill();
+}
+
+/**
+ * Ojo con esclerótica, pupila, brillo y párpado enfadado opcional.
+ * @param {CanvasRenderingContext2D} context
+ * @param {number} x
+ * @param {number} y
+ * @param {number} radius
+ * @param {{lookX?: number, lookY?: number, angry?: number, pupil?: string, blink?: boolean}} [options]
+ *   `angry` inclina un párpado oscuro (positivo = hacia el centro); `blink` cierra el ojo.
+ */
+function eye(context, x, y, radius, { lookX = -0.35, lookY = 0.1, angry = 0, pupil = '#140c20', blink = false } = {}) {
+  if (blink) {
+    context.strokeStyle = pupil;
+    context.lineWidth = 0.7;
+    context.beginPath(); context.moveTo(x - radius, y); context.quadraticCurveTo(x, y + radius * 0.6, x + radius, y); context.stroke();
+    return;
+  }
+  context.fillStyle = '#ffffff';
+  context.beginPath(); context.arc(x, y, radius, 0, TAU); context.fill();
+  context.strokeStyle = 'rgba(20,12,32,0.55)';
+  context.lineWidth = 0.35;
+  context.stroke();
+  context.fillStyle = pupil;
+  context.beginPath(); context.arc(x + lookX * radius * 0.5, y + lookY * radius * 0.5, radius * 0.55, 0, TAU); context.fill();
+  context.fillStyle = 'rgba(255,255,255,0.9)';
+  context.beginPath(); context.arc(x + lookX * radius * 0.5 - radius * 0.18, y + lookY * radius * 0.5 - radius * 0.2, radius * 0.17, 0, TAU); context.fill();
+  if (angry) {
+    context.fillStyle = '#140c20';
+    context.beginPath();
+    context.moveTo(x - radius * 1.1, y - radius * (0.9 + angry * 0.9));
+    context.lineTo(x + radius * 1.1, y - radius * (0.9 - angry * 0.9));
+    context.lineTo(x + radius * 1.1, y - radius * 0.1);
+    context.lineTo(x - radius * 1.1, y - radius * 0.1);
+    context.closePath();
+    context.fill();
+  }
+}
+
+/** Boca: 'smile', 'open' (gritando), 'flat' o 'grin' (dientes). */
+function mouth(context, x, y, width, kind = 'smile', color = '#7a1818') {
+  context.strokeStyle = '#140c20';
+  context.lineWidth = 0.55;
+  if (kind === 'open') {
+    context.fillStyle = color;
+    context.beginPath(); context.ellipse(x, y + width * 0.15, width * 0.5, width * 0.4, 0, 0, TAU); context.fill(); context.stroke();
+    context.fillStyle = '#ff8a8a';
+    context.beginPath(); context.ellipse(x, y + width * 0.32, width * 0.3, width * 0.14, 0, 0, TAU); context.fill();
+  } else if (kind === 'grin') {
+    context.fillStyle = '#ffffff';
+    roundedPath(context, x - width / 2, y - width * 0.15, width, width * 0.5, width * 0.2); context.fill(); context.stroke();
+    context.beginPath(); context.moveTo(x, y - width * 0.15); context.lineTo(x, y + width * 0.35); context.stroke();
+  } else if (kind === 'flat') {
+    context.beginPath(); context.moveTo(x - width / 2, y); context.lineTo(x + width / 2, y); context.stroke();
+  } else {
+    context.beginPath(); context.moveTo(x - width / 2, y - width * 0.1); context.quadraticCurveTo(x, y + width * 0.5, x + width / 2, y - width * 0.1); context.stroke();
+  }
+}
+
+/** Cinemática inversa de una pierna de dos segmentos (la rodilla se dobla hacia `bend`). */
+function solveLeg(hipX, hipY, footX, footY, thigh, shin, bend = -1) {
+  let dx = footX - hipX;
+  let dy = footY - hipY;
+  let distance = Math.hypot(dx, dy) || 0.001;
+  const reach = thigh + shin - 0.02;
+  if (distance > reach) {
+    footX = hipX + dx * reach / distance;
+    footY = hipY + dy * reach / distance;
+    dx = footX - hipX; dy = footY - hipY; distance = reach;
+  }
+  const along = (thigh * thigh - shin * shin + distance * distance) / (2 * distance);
+  const lift = Math.sqrt(Math.max(0, thigh * thigh - along * along));
+  const ux = dx / distance;
+  const uy = dy / distance;
+  return { kneeX: hipX + ux * along - uy * lift * bend, kneeY: hipY + uy * along + ux * lift * bend, footX, footY };
+}
+
+/** Pierna completa con rodilla; devuelve la posición del pie para poner el calzado. */
+function leg(context, hipX, hipY, footX, footY, thigh, shin, width, color, bend = -1) {
+  const { kneeX, kneeY, footX: endX, footY: endY } = solveLeg(hipX, hipY, footX, footY, thigh, shin, bend);
+  tube(context, hipX, hipY, kneeX, kneeY, width, color);
+  tube(context, kneeX, kneeY, endX, endY, width * 0.92, color);
+  return { x: endX, y: endY };
+}
+
+/** Zapato o pezuña ovalado en un punto. */
+function shoe(context, x, y, length, color, { tilt = 0 } = {}) {
+  context.save();
+  context.translate(x, y);
+  context.rotate(tilt);
+  shadedEllipse(context, -length * 0.15, 0, length * 0.55, length * 0.3, color);
+  context.restore();
+}
+
+/** Brillo blanco semitransparente (reflejos sobre superficies). */
+function sheen(context, x, y, rx, ry, rotation = -0.4, opacity = 0.55) {
+  context.fillStyle = `rgba(255,255,255,${opacity})`;
+  context.beginPath();
+  context.ellipse(x, y, rx, ry, rotation, 0, TAU);
+  context.fill();
+}
+
+/** Estrella de cuatro puntas (destellos, brillos de monedas). */
+function sparkle(context, x, y, radius, color = '#ffffff') {
+  context.beginPath();
+  for (let point = 0; point < 8; point++) {
+    const angle = point * Math.PI / 4;
+    const length = point % 2 ? radius * 0.25 : radius;
+    context.lineTo(x + Math.cos(angle) * length, y + Math.sin(angle) * length);
+  }
+  context.closePath();
+  context.fillStyle = color;
+  context.fill();
+}
+return { TAU, CREATURE_PADDING, tone, createCreatureSprite, tube, curveTube, shadedEllipse, shadedRect, eye, mouth, solveLeg, leg, shoe, sheen, sparkle };
+})();
+
+// ─── src/graphics/enemyArtHumans.js ───
+const __module_src_graphics_enemyArtHumans_js = (() => {
+/**
+ * @file Dibujo vectorial de los personajes humanos: guiri, turista, ejecutivo,
+ * madre con chancla, Don Hacienda y la abuela. Todos miran a la IZQUIERDA.
+ *
+ * Cada entrada indica el tamaño de su caja, cuántos fotogramas tiene su ciclo
+ * de animación y la función que pinta un fotograma.
+ */
+const { TAU, tone, tube, leg, shoe, shadedEllipse, shadedRect, eye, mouth, sheen } = __module_src_graphics_creatureKit_js;
+const { roundedPath } = __module_src_graphics_shapes_js;
+
+/** Posición de un pie en un ciclo de paso: avanza y se levanta. */
+function stepFoot(centerX, groundY, phase, offset, stride, lift) {
+  const angle = phase + offset;
+  return { x: centerX + Math.cos(angle) * stride, y: groundY - Math.max(0, Math.sin(angle)) * lift };
+}
+
+/** Dos piernas andando con calcetín y zapato; devuelve nada. */
+function walkingLegs(context, { cx, hipY, groundY, phase, stride, lift, thigh, shin, width, color, sock = null, shoeColor, shoeLength = 4.2 }) {
+  for (const [offset, shade] of [[Math.PI, -0.25], [0, 0]]) {
+    const foot = stepFoot(cx, groundY, phase, offset, stride, lift);
+    const hipX = cx + (offset ? -0.9 : 0.9);
+    const leaf = leg(context, hipX, hipY, foot.x, foot.y - 0.7, thigh, shin, width, shade ? tone(color, shade) : color);
+    if (sock) { tube(context, leaf.x, leaf.y - 0.3, leaf.x, leaf.y - 1.5, width * 0.95, sock, tone(sock, -0.25)); }
+    shoe(context, leaf.x, leaf.y + 0.2, shoeLength, shade ? tone(shoeColor, shade) : shoeColor);
+  }
+}
+
+/** Camisa hawaiana con flores. */
+function hawaiianShirt(context, x, y, width, height) {
+  shadedRect(context, x, y, width, height, 1.8, '#1fb868');
+  const flowers = [[0.25, 0.3, '#ff6a9a'], [0.65, 0.25, '#ffe45a'], [0.45, 0.65, '#ffffff'], [0.8, 0.7, '#ff6a9a'], [0.15, 0.78, '#ffe45a']];
+  for (const [fx, fy, color] of flowers) {
+    context.fillStyle = color;
+    context.beginPath(); context.arc(x + width * fx, y + height * fy, 0.9, 0, TAU); context.fill();
+    context.fillStyle = '#ff8a1c';
+    context.beginPath(); context.arc(x + width * fx, y + height * fy, 0.32, 0, TAU); context.fill();
+  }
+}
+
+const HUMAN_ENEMIES = {
+  guiri: {
+    width: 16, height: 16, frames: 4,
+    paint(context, frame, frames) {
+      const phase = frame / frames * TAU;
+      walkingLegs(context, { cx: 8, hipY: 12.3, groundY: 15.8, phase, stride: 1.8, lift: 1.2, thigh: 1.8, shin: 1.8, width: 2, color: '#ff8a68', sock: '#ffffff', shoeColor: '#8a5a2a' });
+      const bob = -Math.abs(Math.sin(phase)) * 0.6;
+      context.save();
+      context.translate(0, bob);
+      // Brazos balanceándose.
+      for (const [side, shade] of [[1, -0.25], [-1, 0]]) {
+        const swing = Math.cos(phase + (side > 0 ? Math.PI : 0)) * 1.4;
+        tube(context, 8 + side * 3.2, 9, 8 + side * 3.6 + swing * 0.3, 11.4, 1.7, shade ? tone('#ff8a68', shade) : '#ff8a68');
+      }
+      hawaiianShirt(context, 4.8, 8, 6.6, 5);
+      // Cámara colgada.
+      shadedRect(context, 6.2, 10.4, 3.4, 2.2, 0.6, '#33323c');
+      context.fillStyle = '#9ad8ff'; context.beginPath(); context.arc(7.9, 11.5, 0.7, 0, TAU); context.fill();
+      // Cabeza quemada con pelo rubio.
+      shadedEllipse(context, 7.4, 4.6, 4.6, 4.2, '#ff8a68', { light: '#ffb89a', dark: '#c8483a' });
+      shadedEllipse(context, 7.6, 1.6, 4.4, 2.2, '#ffd84a', { light: '#fff09a' });
+      context.fillStyle = '#ffd84a'; context.beginPath(); context.ellipse(11.6, 3.6, 1, 1.8, 0, 0, TAU); context.fill();
+      eye(context, 5.6, 4.4, 1.35, { lookX: -0.9 }); eye(context, 8.6, 4.4, 1.35, { lookX: -0.9 });
+      context.fillStyle = '#ffffff'; roundedPath(context, 3.2, 5.2, 2.2, 1.1, 0.5); context.fill();
+      mouth(context, 6.4, 7, 2.6, 'grin');
+      context.restore();
+    },
+    squashed(context) {
+      shadedEllipse(context, 8, 12.6, 6.4, 2.6, '#ff8a68');
+      hawaiianShirt(context, 3.5, 12, 9, 2.6);
+      eye(context, 5, 12.4, 1.1, { blink: true }); eye(context, 9, 12.4, 1.1, { blink: true });
+      context.fillStyle = '#ffd84a'; context.beginPath(); context.ellipse(8, 10.6, 4.6, 1.6, 0, 0, TAU); context.fill();
+    }
+  },
+
+  turista: {
+    width: 16, height: 24, frames: 4,
+    paint(context, frame, frames) {
+      const phase = frame / frames * TAU;
+      walkingLegs(context, { cx: 8, hipY: 17.4, groundY: 23.8, phase, stride: 1.8, lift: 1.3, thigh: 3.2, shin: 3.2, width: 2.2, color: '#ff9a7a', sock: '#ffffff', shoeColor: '#2c6ad8' });
+      const bob = -Math.abs(Math.sin(phase)) * 0.6;
+      context.save();
+      context.translate(0, bob);
+      // Mochila a la espalda (a la derecha, mira a la izquierda).
+      shadedRect(context, 9.4, 9.4, 5.2, 7, 1.6, '#e8402a');
+      context.fillStyle = '#ffd84a'; context.fillRect(10.2, 12.4, 3.6, 0.8);
+      // Pantalón corto y camiseta.
+      shadedRect(context, 4.4, 15.2, 7.4, 3.2, 1, '#e8d8a8');
+      shadedRect(context, 4.4, 9.4, 7.4, 6.4, 2, '#3a8af0');
+      context.fillRect(6, 11.4, 4, 0.9); context.fillRect(6, 13, 3, 0.9);
+      for (const [side, shade] of [[1, -0.25], [-1, 0]]) {
+        const swing = Math.cos(phase + (side > 0 ? Math.PI : 0)) * 1.6;
+        tube(context, 8 + side * 3.8, 10.6, 8 + side * 4.2 + swing * 0.3, 14.4, 1.9, shade ? tone('#ff9a7a', shade) : '#ff9a7a');
+      }
+      // Cámara de fotos enorme.
+      shadedRect(context, 3.4, 12.4, 4.2, 2.8, 0.7, '#2c2a34');
+      context.fillStyle = '#9ad8ff'; context.beginPath(); context.arc(5.4, 13.8, 1, 0, TAU); context.fill();
+      sheen(context, 5, 13.3, 0.4, 0.3);
+      // Cabeza con gorra visera.
+      shadedEllipse(context, 7.6, 5.2, 4.6, 4.4, '#ffa88a', { light: '#ffd0b8', dark: '#d0584a' });
+      shadedEllipse(context, 7.8, 2.4, 5, 2.8, '#e8402a');
+      context.fillStyle = '#e8402a'; roundedPath(context, 1, 3.2, 6, 1.6, 0.8); context.fill();
+      eye(context, 6, 5.4, 1.4, { lookX: -0.8 }); eye(context, 9.2, 5.4, 1.4, { lookX: -0.8 });
+      mouth(context, 6.8, 8.2, 2.8, 'open');
+      context.restore();
+    }
+  },
+
+  ejecutivo: {
+    width: 16, height: 16, frames: 4,
+    paint(context, frame, frames) {
+      const phase = frame / frames * TAU;
+      walkingLegs(context, { cx: 8, hipY: 12.4, groundY: 15.8, phase, stride: 2, lift: 1.3, thigh: 1.8, shin: 1.8, width: 2.1, color: '#2a2d44', shoeColor: '#14101c', shoeLength: 4.6 });
+      const bob = -Math.abs(Math.sin(phase)) * 0.7;
+      context.save();
+      context.translate(0, bob);
+      shadedRect(context, 4.2, 7.8, 7.8, 5.6, 2, '#3a3f66');
+      // Camisa y corbata roja.
+      context.fillStyle = '#ffffff'; context.beginPath(); context.moveTo(7, 7.9); context.lineTo(9.6, 7.9); context.lineTo(8.3, 11.6); context.closePath(); context.fill();
+      context.fillStyle = '#e02a2a'; context.beginPath(); context.moveTo(7.7, 8.4); context.lineTo(8.9, 8.4); context.lineTo(9.2, 12); context.lineTo(8.3, 12.8); context.lineTo(7.4, 12); context.closePath(); context.fill();
+      // Brazo con maletín.
+      tube(context, 5, 9, 3.4, 12, 1.8, '#3a3f66');
+      shadedRect(context, 0.8, 11.4, 4.6, 3.4, 0.8, '#7a4a28');
+      context.fillStyle = '#d8a850'; context.fillRect(2.4, 11.9, 1.4, 0.8);
+      tube(context, 11, 9, 12.4, 11.8 + Math.sin(phase) * 0.6, 1.8, '#3a3f66');
+      // Cabeza enfadada.
+      shadedEllipse(context, 8, 4.4, 4.2, 4, '#ffcaa0', { dark: '#d08a60' });
+      context.fillStyle = '#3a2a20'; context.beginPath(); context.ellipse(8.2, 1.8, 4.2, 2, 0, Math.PI, TAU); context.fill();
+      context.beginPath(); context.ellipse(12, 3.4, 0.9, 1.4, 0, 0, TAU); context.fill();
+      eye(context, 6.2, 4.4, 1.3, { lookX: -0.9, angry: 0.7 }); eye(context, 9.4, 4.4, 1.3, { lookX: -0.9, angry: -0.7 });
+      mouth(context, 7.2, 7, 2.8, 'flat');
+      context.restore();
+    },
+    squashed(context) {
+      shadedEllipse(context, 8, 12.8, 6.2, 2.4, '#3a3f66');
+      shadedEllipse(context, 8, 11.2, 4, 1.8, '#ffcaa0');
+      eye(context, 6.4, 11.2, 1, { blink: true }); eye(context, 9.6, 11.2, 1, { blink: true });
+      shadedRect(context, 0.6, 12.4, 4.6, 3, 0.8, '#7a4a28');
+    }
+  },
+
+  madre: {
+    width: 16, height: 24, frames: 1,
+    poses: ['standing', 'hopping', 'throwing'],
+    paint(context, frame, frames, pose) {
+      const hopping = pose === 'hopping';
+      const throwing = pose === 'throwing';
+      const lift = hopping ? 2.2 : 0;
+      for (const [x, shade] of [[6.2, -0.2], [9.8, 0]]) {
+        tube(context, x, 17.4 - lift, x, 22.6 - lift, 2.1, shade ? tone('#ffb89a', shade) : '#ffb89a');
+        shoe(context, x - 0.2, 23.4 - lift, 4.4, '#2c6ad8');
+      }
+      context.save();
+      context.translate(0, -lift);
+      // Vestido de lunares con delantal.
+      context.beginPath(); context.moveTo(4.4, 9.6); context.lineTo(11.8, 9.6); context.lineTo(13.2, 19); context.lineTo(3, 19); context.closePath();
+      const dress = context.createLinearGradient(3, 0, 13, 0);
+      dress.addColorStop(0, '#ff9ad0'); dress.addColorStop(0.5, '#e8509a'); dress.addColorStop(1, '#a8286a');
+      context.fillStyle = dress; context.fill();
+      context.fillStyle = '#ffffff';
+      for (const [dx, dy] of [[5, 12], [9, 11.4], [11, 15], [4.6, 16], [8, 17]]) { context.beginPath(); context.arc(dx, dy, 0.7, 0, TAU); context.fill(); }
+      shadedRect(context, 5.4, 12, 5.4, 7, 1.4, '#ffffff');
+      // Brazos: uno sostiene la chancla.
+      tube(context, 11.6, 10.6, 13, throwing ? 6.4 : 13, 1.9, '#ffb89a');
+      if (throwing) shoe(context, 13.6, 5.6, 4.4, '#2c8af0', { tilt: -0.6 });
+      tube(context, 4.6, 10.6, 3.4, 14.4, 1.9, '#ffb89a');
+      // Cabeza con moño y rulos.
+      shadedEllipse(context, 7.8, 5.6, 4.4, 4.2, '#ffcaa8', { dark: '#d08a68' });
+      shadedEllipse(context, 8.4, 1.4, 3.2, 2.4, '#8a8a98', { light: '#d0d0dc' });
+      shadedEllipse(context, 7.8, 2.8, 4.8, 2.2, '#8a8a98', { light: '#d0d0dc' });
+      eye(context, 6.2, 5.8, 1.3, { lookX: -0.8, angry: 0.6 }); eye(context, 9.4, 5.8, 1.3, { lookX: -0.8, angry: -0.6 });
+      mouth(context, 7, 8.6, 3, throwing ? 'open' : 'flat');
+      context.fillStyle = 'rgba(255,90,120,0.5)'; context.beginPath(); context.arc(4.6, 7.4, 1, 0, TAU); context.arc(11, 7.4, 1, 0, TAU); context.fill();
+      context.restore();
+    }
+  },
+
+  hacienda: {
+    width: 32, height: 32, frames: 2,
+    poses: ['frame', 'hurt'], poseFrames: { hurt: 1 },
+    paint(context, frame, frames, pose) {
+      const hurt = pose === 'hurt';
+      const phase = frame / frames * TAU;
+      const bob = hurt ? 0 : Math.sin(phase) * 0.8;
+      const suit = hurt ? '#ffffff' : '#2c2f52';
+      // Piernas.
+      for (const [x, shade] of [[11, -0.2], [20, 0]]) {
+        tube(context, x, 23, x - 0.5, 29.6, 4.2, shade ? tone(suit, shade) : suit);
+        shoe(context, x - 1.6, 30.8, 8, '#14101c');
+      }
+      context.save();
+      context.translate(0, bob);
+      // Cuerpo trajeado enorme.
+      shadedRect(context, 6, 10, 20, 16, 5, suit);
+      context.fillStyle = '#ffffff'; context.beginPath(); context.moveTo(13, 10.4); context.lineTo(19, 10.4); context.lineTo(16, 20); context.closePath(); context.fill();
+      context.fillStyle = hurt ? '#ff3a3a' : '#e02a2a'; context.beginPath(); context.moveTo(14.8, 11); context.lineTo(17.2, 11); context.lineTo(17.8, 22); context.lineTo(16, 24); context.lineTo(14.2, 22); context.closePath(); context.fill();
+      // Brazos y maletín lleno de facturas.
+      tube(context, 7.6, 14, 4, 22, 4.2, suit);
+      shadedRect(context, 0, 21, 9, 7, 1.4, '#7a4a28');
+      context.fillStyle = '#d8a850'; context.fillRect(3.8, 22, 1.8, 1.4);
+      context.fillStyle = '#ffffff'; context.fillRect(1.4, 19.8, 6, 1.6);
+      tube(context, 24.4, 14, 27.6, 19, 4.2, suit);
+      shadedEllipse(context, 27.8, 19.6, 2, 2, '#ffcaa0');
+      // Cabeza calva con gafas redondas y bigote.
+      shadedEllipse(context, 15, 6.6, 8, 7.4, hurt ? '#ff8a8a' : '#ffcaa0', { dark: '#d08a60' });
+      context.fillStyle = '#ffffff'; context.beginPath(); context.arc(10.6, 6.4, 3, 0, TAU); context.arc(18.6, 6.4, 3, 0, TAU); context.fill();
+      context.strokeStyle = '#140c20'; context.lineWidth = 0.9; context.stroke();
+      context.fillStyle = '#140c20'; context.beginPath(); context.arc(9.8, 6.6, 1.2, 0, TAU); context.arc(17.8, 6.6, 1.2, 0, TAU); context.fill();
+      context.strokeStyle = '#140c20'; context.lineWidth = 1.2;
+      context.beginPath(); context.moveTo(7.4, 3); context.lineTo(12.6, 4.4); context.moveTo(21.8, 3); context.lineTo(16.6, 4.4); context.stroke();
+      context.fillStyle = '#3a2a20'; roundedPath(context, 9.4, 10.2, 11, 2.2, 1.1); context.fill();
+      mouth(context, 14.6, 13.4, 4.2, hurt ? 'open' : 'flat');
+      context.fillStyle = '#ffcaa0'; context.beginPath(); context.ellipse(6.6, 6.8, 1.2, 2, 0, 0, TAU); context.fill();
+      context.restore();
+    }
+  },
+
+  abuela: {
+    width: 16, height: 24, frames: 1,
+    paint(context) {
+      for (const x of [6.4, 9.6]) { tube(context, x, 18, x, 22.8, 2, '#d8d8e0'); shoe(context, x - 0.2, 23.6, 4.2, '#14101c'); }
+      context.beginPath(); context.moveTo(4.4, 9.6); context.lineTo(11.6, 9.6); context.lineTo(13.4, 19.6); context.lineTo(2.8, 19.6); context.closePath();
+      const dress = context.createLinearGradient(3, 0, 13, 0);
+      dress.addColorStop(0, '#4a4a68'); dress.addColorStop(1, '#14141e');
+      context.fillStyle = dress; context.fill();
+      shadedRect(context, 5.6, 12.6, 5, 6.4, 1.2, '#ffffff');
+      tube(context, 11.4, 10.6, 12.6, 15, 1.9, '#ffd0b0');
+      tube(context, 4.6, 10.6, 3.6, 15, 1.9, '#ffd0b0');
+      // Bastón.
+      context.strokeStyle = '#6a4220'; context.lineWidth = 1; context.beginPath(); context.moveTo(1.6, 14.4); context.lineTo(1.6, 23.6); context.stroke();
+      context.beginPath(); context.arc(2.6, 14.4, 1, Math.PI, TAU); context.stroke();
+      shadedEllipse(context, 8, 5.8, 4.4, 4.2, '#ffd8bc', { dark: '#d09a78' });
+      shadedEllipse(context, 8, 2.6, 5.2, 3, '#e8e8f0', { light: '#ffffff', dark: '#a0a0b4' });
+      shadedEllipse(context, 8, 0.8, 2.4, 1.6, '#e8e8f0', { light: '#ffffff' });
+      context.strokeStyle = '#14101c'; context.lineWidth = 0.55;
+      context.beginPath(); context.arc(6.4, 6, 1.4, 0, TAU); context.arc(9.8, 6, 1.4, 0, TAU); context.moveTo(7.8, 6); context.lineTo(8.4, 6); context.stroke();
+      context.fillStyle = '#140c20'; context.beginPath(); context.arc(6.2, 6, 0.55, 0, TAU); context.arc(9.6, 6, 0.55, 0, TAU); context.fill();
+      mouth(context, 8, 8.6, 2.4, 'smile');
+    }
+  }
+};
+return { HUMAN_ENEMIES };
+})();
+
+// ─── src/graphics/enemyArtAnimals.js ───
+const __module_src_graphics_enemyArtAnimals_js = (() => {
+/**
+ * @file Dibujo vectorial de los animales de tierra: paloma, cucaracha, oveja,
+ * lagarto, caracol, toro y pulpo. Todos miran a la IZQUIERDA.
+ */
+const { TAU, tone, tube, curveTube, shadedEllipse, eye, mouth, sheen } = __module_src_graphics_creatureKit_js;
+
+const ANIMAL_ENEMIES = {
+  paloma: {
+    width: 16, height: 16, frames: 4,
+    paint(context, frame, frames) {
+      const phase = frame / frames * TAU;
+      const bob = -Math.abs(Math.sin(phase)) * 0.5;
+      // Patas anaranjadas andando.
+      for (const [offset, shade] of [[Math.PI, -0.25], [0, 0]]) {
+        const footX = 8 + Math.cos(phase + offset) * 1.6;
+        const footY = 15.6 - Math.max(0, Math.sin(phase + offset)) * 1.1;
+        tube(context, 8 + (offset ? -0.6 : 0.8), 12.4, footX, footY, 1, shade ? tone('#ff9a2a', shade) : '#ff9a2a');
+        tube(context, footX, footY, footX - 1.6, footY + 0.1, 0.9, '#ff9a2a');
+      }
+      context.save();
+      context.translate(0, bob);
+      // Cola y cuerpo.
+      context.fillStyle = '#6a6e82'; context.beginPath(); context.moveTo(12, 8); context.lineTo(16, 6.6); context.lineTo(15.2, 11); context.lineTo(12, 11.6); context.closePath(); context.fill();
+      shadedEllipse(context, 8.6, 9.6, 5.6, 4.2, '#a4a8bc', { light: '#dcdeea', dark: '#5a5e74' });
+      // Ala.
+      context.fillStyle = '#7e8298'; context.beginPath(); context.ellipse(9.8, 9.6, 3.4, 2.2, -0.3, 0, TAU); context.fill();
+      context.strokeStyle = 'rgba(255,255,255,0.35)'; context.lineWidth = 0.4; context.beginPath(); context.moveTo(8, 9); context.lineTo(11.6, 10.4); context.stroke();
+      // Cuello iridiscente y cabeza que cabecea.
+      const headBob = Math.sin(phase * 2) * 0.5;
+      const neck = context.createLinearGradient(2, 5, 6, 9);
+      neck.addColorStop(0, '#3ac888'); neck.addColorStop(1, '#8a4ad8');
+      context.fillStyle = neck; context.beginPath(); context.ellipse(5.4, 8, 2.6, 2.8, 0, 0, TAU); context.fill();
+      shadedEllipse(context, 4, 5.8 + headBob, 2.9, 2.8, '#b4b8cc', { light: '#e8eaf4' });
+      context.fillStyle = '#ffa42a'; context.beginPath(); context.moveTo(1.4, 5.6 + headBob); context.lineTo(-0.8, 6.4 + headBob); context.lineTo(1.6, 7 + headBob); context.closePath(); context.fill();
+      eye(context, 3.6, 5.2 + headBob, 1, { lookX: -0.9, pupil: '#8a1c10', angry: 0.5 });
+      context.restore();
+    },
+    squashed(context) {
+      shadedEllipse(context, 8, 13, 6.6, 2.6, '#a4a8bc');
+      context.fillStyle = '#ffa42a'; context.beginPath(); context.moveTo(2, 12.6); context.lineTo(0, 13.2); context.lineTo(2, 13.8); context.closePath(); context.fill();
+      eye(context, 4, 12.4, 0.9, { blink: true });
+    }
+  },
+
+  cucaracha: {
+    width: 16, height: 16, frames: 4,
+    paint(context, frame, frames) {
+      const phase = frame / frames * TAU;
+      // Seis patas que corretean.
+      for (let index = 0; index < 3; index++) {
+        for (const side of [-1, 1]) {
+          const alternate = (index + (side > 0 ? 1 : 0)) % 2 ? Math.PI : 0;
+          const reach = Math.cos(phase * 2 + alternate) * 1.4;
+          const baseX = 5.2 + index * 3;
+          tube(context, baseX, 13, baseX + reach, side > 0 ? 15.7 : 14.9, 0.8, '#5a2a10');
+        }
+      }
+      // Antenas que vibran.
+      const wiggle = Math.sin(phase * 2) * 0.7;
+      curveTube(context, [[3, 10.4], [0.8, 8 + wiggle], [-0.6, 5.4]], 0.6, '#5a2a10');
+      curveTube(context, [[3.6, 10.2], [2, 7.4 - wiggle], [1.4, 4.6]], 0.6, '#5a2a10');
+      shadedEllipse(context, 9, 11.4, 6.6, 3.8, '#b8662a', { light: '#f0a456', dark: '#5a2a10' });
+      context.strokeStyle = 'rgba(60,24,6,0.7)'; context.lineWidth = 0.5; context.beginPath(); context.moveTo(9, 7.8); context.lineTo(9, 15); context.stroke();
+      sheen(context, 7, 9.6, 2.4, 0.8, -0.2, 0.55);
+      shadedEllipse(context, 3.8, 11.6, 2.6, 2.4, '#7a3a14');
+      eye(context, 3, 10.6, 0.9, { lookX: -0.9, angry: 0.5 });
+    },
+    squashed(context) {
+      shadedEllipse(context, 8, 13.8, 7, 2, '#b8662a');
+      context.strokeStyle = '#5a2a10'; context.lineWidth = 0.7;
+      for (const x of [3, 6, 10, 13]) { context.beginPath(); context.moveTo(x, 14.8); context.lineTo(x + (x > 8 ? 1.6 : -1.6), 15.8); context.stroke(); }
+      eye(context, 3.6, 13.6, 0.8, { blink: true });
+    }
+  },
+
+  oveja: {
+    width: 16, height: 16, frames: 4,
+    paint(context, frame, frames) {
+      const phase = frame / frames * TAU;
+      const bob = -Math.abs(Math.sin(phase)) * 0.5;
+      for (const [x, offset, shade] of [[4.6, Math.PI, -0.3], [6.4, 0, 0], [10.6, 0, -0.3], [12.4, Math.PI, 0]]) {
+        const swing = Math.cos(phase + offset) * 1.1;
+        tube(context, x, 12, x + swing, 15.6 - Math.max(0, Math.sin(phase + offset)) * 0.8, 1.4, shade ? tone('#4a4458', shade) : '#4a4458');
+      }
+      context.save();
+      context.translate(0, bob);
+      // Lana: muchas bolitas.
+      const puffs = [[6, 9.4, 3.4], [9, 8, 3.6], [12, 9.4, 3.4], [7.6, 11.6, 3.2], [11, 11.8, 3.2], [9.6, 10, 3.8], [5.4, 11, 2.6], [13, 11.4, 2.4]];
+      for (const [x, y, radius] of puffs) shadedEllipse(context, x, y, radius, radius, '#fdfaf0', { light: '#ffffff', dark: '#b8b4c8' });
+      // Cabeza oscura con orejas.
+      shadedEllipse(context, 2.8, 9.2, 2.8, 3.1, '#5a5468', { light: '#8a849a', dark: '#2c2838' });
+      shadedEllipse(context, 4.6, 7, 1.7, 0.9, '#5a5468', { rotation: -0.5 });
+      shadedEllipse(context, 4.8, 8.2, 1.7, 0.9, '#5a5468', { rotation: 0.4 });
+      shadedEllipse(context, 4.6, 5.8, 3.4, 2, '#fdfaf0', { light: '#ffffff' });
+      eye(context, 2.4, 8.6, 0.95, { lookX: -0.9, angry: 0.4 });
+      context.fillStyle = '#ff9aa8'; context.beginPath(); context.ellipse(0.9, 10.4, 0.8, 0.6, 0, 0, TAU); context.fill();
+      context.restore();
+    },
+    squashed(context) {
+      for (const [x, y, r] of [[5, 12.6, 3], [8.6, 12, 3.4], [12, 12.6, 3]]) shadedEllipse(context, x, y, r, r * 0.7, '#fdfaf0', { dark: '#b8b4c8' });
+      shadedEllipse(context, 2.4, 13.4, 2.4, 1.6, '#5a5468');
+      eye(context, 2.2, 13, 0.8, { blink: true });
+    }
+  },
+
+  lagarto: {
+    width: 16, height: 16, frames: 4,
+    paint(context, frame, frames) {
+      const phase = frame / frames * TAU;
+      const tail = Math.sin(phase) * 1.2;
+      curveTube(context, [[10, 12.4], [13, 12.6 + tail], [15.4, 10 - tail * 0.5]], 2.2, '#3ab04a');
+      for (const [x, offset] of [[4.2, Math.PI], [6.2, 0], [10.4, 0], [12, Math.PI]]) {
+        const swing = Math.cos(phase + offset) * 1.2;
+        tube(context, x, 13.6, x + swing, 15.6 - Math.max(0, Math.sin(phase + offset)) * 0.8, 1.2, '#2a8a3a');
+      }
+      shadedEllipse(context, 8.4, 12, 5.6, 2.8, '#46c258', { light: '#98f088', dark: '#1c6a2c' });
+      context.fillStyle = 'rgba(255,255,255,0.35)'; context.beginPath(); context.ellipse(8.4, 12.8, 4.2, 1, 0, 0, TAU); context.fill();
+      context.fillStyle = '#2a8a3a';
+      for (let spike = 0; spike < 5; spike++) { context.beginPath(); context.moveTo(5.6 + spike * 1.6, 9.6 + Math.abs(spike - 2) * 0.2); context.lineTo(6.4 + spike * 1.6, 8.4); context.lineTo(7.2 + spike * 1.6, 9.6); context.fill(); }
+      shadedEllipse(context, 3.4, 11, 3.2, 2.4, '#52cc62', { light: '#a8f89a' });
+      eye(context, 3, 10, 1.1, { lookX: -0.9, angry: 0.5, pupil: '#8a1c10' });
+      if (frame % 2 === 0) { context.strokeStyle = '#ff4a5a'; context.lineWidth = 0.6; context.beginPath(); context.moveTo(0.6, 11.8); context.lineTo(-1.2, 11.4); context.lineTo(-1.8, 10.8); context.moveTo(-1.2, 11.4); context.lineTo(-1.8, 12); context.stroke(); }
+    },
+    squashed(context) {
+      shadedEllipse(context, 8, 14, 7, 1.8, '#46c258');
+      eye(context, 3.4, 13.6, 0.8, { blink: true });
+    }
+  },
+
+  caracol: {
+    width: 16, height: 16, frames: 4,
+    paint(context, frame, frames) {
+      const phase = frame / frames * TAU;
+      const stretch = Math.sin(phase) * 0.7;
+      // Cuerpo baboso.
+      context.fillStyle = '#d8b88c'; context.beginPath();
+      context.moveTo(-0.6 - stretch, 15.6); context.quadraticCurveTo(-1.4 - stretch, 11.4, 2.6, 10.6); context.lineTo(5, 13); context.lineTo(15, 13.6); context.quadraticCurveTo(16, 15.6, 14, 15.8); context.closePath(); context.fill();
+      const body = context.createLinearGradient(0, 10, 0, 16); body.addColorStop(0, 'rgba(255,255,255,0.35)'); body.addColorStop(1, 'rgba(120,80,40,0.3)');
+      context.fillStyle = body; context.fill();
+      // Antenas con ojos.
+      for (const [x, sway] of [[1.4, 0.6], [3.2, -0.6]]) {
+        const bend = Math.sin(phase + (x > 2 ? 1.5 : 0)) * sway;
+        curveTube(context, [[x + 0.6, 10.8], [x - 0.8 + bend, 7.6], [x - 1.4 + bend, 5.2]], 0.9, '#d8b88c');
+        eye(context, x - 1.4 + bend, 4.8, 1.2, { lookX: -0.8 });
+      }
+      // Concha en espiral.
+      shadedEllipse(context, 10, 8.4, 5.6, 5.4, '#d8782a', { light: '#ffc07a', dark: '#7a3a10' });
+      context.strokeStyle = '#7a3a10'; context.lineWidth = 0.7; context.beginPath();
+      for (let angle = 0; angle < 11; angle += 0.4) context.lineTo(10 + Math.cos(angle) * angle * 0.42, 8.4 + Math.sin(angle) * angle * 0.4);
+      context.stroke();
+      sheen(context, 7.8, 5.4, 1.8, 0.8, -0.6, 0.5);
+    },
+    squashed(context) {
+      shadedEllipse(context, 8, 14.2, 7, 1.8, '#d8b88c');
+      shadedEllipse(context, 10, 12.6, 4, 1.8, '#d8782a');
+      eye(context, 2.4, 13.6, 0.8, { blink: true });
+    }
+  },
+
+  concha: {
+    width: 16, height: 15, frames: 1,
+    paint(context) {
+      shadedEllipse(context, 8, 8, 7, 6.6, '#d8782a', { light: '#ffc07a', dark: '#7a3a10' });
+      context.strokeStyle = '#7a3a10'; context.lineWidth = 0.8; context.beginPath();
+      for (let angle = 0; angle < 13; angle += 0.4) context.lineTo(8 + Math.cos(angle) * angle * 0.48, 8 + Math.sin(angle) * angle * 0.46);
+      context.stroke();
+      sheen(context, 5.4, 4.4, 2.4, 1, -0.6, 0.5);
+      context.fillStyle = '#d8b88c'; context.beginPath(); context.ellipse(8, 14.2, 6.6, 1.2, 0, 0, TAU); context.fill();
+    }
+  },
+
+  toro: {
+    width: 24, height: 16, frames: 4,
+    poses: ['frame', 'angry'],
+    paint(context, frame, frames, pose) {
+      const angry = pose === 'angry';
+      const phase = frame / frames * TAU;
+      const gallop = angry ? 1.8 : 1.1;
+      for (const [x, offset, shade] of [[6.4, Math.PI, -0.3], [9, 0, 0], [16.6, 0, -0.3], [19, Math.PI, 0]]) {
+        const swing = Math.cos(phase + offset) * gallop;
+        tube(context, x, 11, x + swing, 15.2 - Math.max(0, Math.sin(phase + offset)) * 1.3, 2.4, shade ? tone('#3a2218', shade) : '#3a2218');
+        shadedEllipse(context, x + swing - 0.3, 15.5 - Math.max(0, Math.sin(phase + offset)) * 1.3, 1.8, 0.9, '#140c20');
+      }
+      const bob = -Math.abs(Math.sin(phase)) * (angry ? 0.9 : 0.5);
+      context.save();
+      context.translate(0, bob);
+      curveTube(context, [[20.6, 6.6], [23.4, 8], [22.4, 12]], 1, '#2a180e');
+      shadedEllipse(context, 14, 8.2, 8.6, 5.2, angry ? '#5a2a1a' : '#4a2c1c', { light: '#8a5a40', dark: '#1c0e08' });
+      // Joroba y cabeza agachada.
+      shadedEllipse(context, 8.4, 5.4, 4.6, 3.8, angry ? '#6a2e1c' : '#573322', { light: '#946248' });
+      shadedEllipse(context, 4.6, 9, 4.4, 3.6, angry ? '#6a2e1c' : '#573322', { light: '#946248', rotation: 0.2 });
+      shadedEllipse(context, 1.8, 10.8, 2.2, 1.7, '#d8b0a0', { light: '#fff0e8' });
+      context.fillStyle = '#140c20'; context.beginPath(); context.arc(1, 10.6, 0.4, 0, TAU); context.arc(2.4, 11.2, 0.4, 0, TAU); context.fill();
+      // Cuernos blancos.
+      for (const [bx, by, curl] of [[5.6, 6, -1], [7.6, 6.4, 0.6]]) {
+        context.fillStyle = '#fff6e0';
+        context.beginPath(); context.moveTo(bx - 1, by + 1); context.quadraticCurveTo(bx - 3 * Math.abs(curl) - 1, by - 3, bx - 5, by - 2.6 + curl); context.quadraticCurveTo(bx - 1.6, by - 1.6, bx + 0.6, by - 0.2); context.closePath(); context.fill();
+        context.strokeStyle = '#a89878'; context.lineWidth = 0.4; context.stroke();
+      }
+      eye(context, 4, 8.4, 1.2, { lookX: -0.9, angry: 0.9, pupil: angry ? '#d41c1c' : '#140c20' });
+      if (angry) {
+        context.fillStyle = 'rgba(255,255,255,0.7)';
+        for (let puff = 0; puff < 2; puff++) { context.beginPath(); context.arc(-1 - puff * 1.4, 10.4 + Math.sin(phase + puff) * 0.6, 0.9 + puff * 0.4, 0, TAU); context.fill(); }
+      }
+      context.restore();
+    }
+  },
+
+  pulpo: {
+    width: 16, height: 24, frames: 4,
+    paint(context, frame, frames) {
+      const phase = frame / frames * TAU;
+      // Tentáculos ondulantes.
+      for (let index = 0; index < 4; index++) {
+        const baseX = 3.6 + index * 3;
+        const wave = Math.sin(phase + index * 1.3) * 1.6;
+        curveTube(context, [[baseX, 14], [baseX + wave, 18], [baseX - wave * 0.6 + (index - 1.5) * 0.6, 23]], 2.6, '#e84a9a', '#8a1c5a');
+        context.fillStyle = 'rgba(255,200,230,0.8)';
+        for (const t of [0.5, 0.8]) { context.beginPath(); context.arc(baseX + wave * t * 0.5, 14 + t * 8, 0.45, 0, TAU); context.fill(); }
+      }
+      shadedEllipse(context, 8, 9, 7, 7.6, '#f05aa8', { light: '#ffb0d8', dark: '#9a1c5c' });
+      for (const [dx, dy] of [[4, 4], [11, 5], [7, 3]]) { context.fillStyle = 'rgba(255,255,255,0.28)'; context.beginPath(); context.arc(dx, dy, 0.9, 0, TAU); context.fill(); }
+      eye(context, 5.4, 9, 2.2, { lookX: -0.7, angry: 0.7 }); eye(context, 10.6, 9, 2.2, { lookX: -0.7, angry: -0.7 });
+      mouth(context, 8, 13.2, 3, 'open', '#7a1048');
+    }
+  }
+};
+return { ANIMAL_ENEMIES };
+})();
+
+// ─── src/graphics/enemyArtFlyers.js ───
+const __module_src_graphics_enemyArtFlyers_js = (() => {
+/**
+ * @file Dibujo vectorial de los enemigos voladores: cucaracha voladora,
+ * mosquito, gaviota, meiga y murciélago. Todos miran a la IZQUIERDA.
+ */
+const { TAU, tone, tube, curveTube, shadedEllipse, eye, mouth, sheen } = __module_src_graphics_creatureKit_js;
+
+/** Ala en forma de lágrima que sale de (x, y) con un ángulo de aleteo. */
+function wing(context, x, y, length, width, angle, color, { alpha = 1, edge = null } = {}) {
+  context.save();
+  context.translate(x, y);
+  context.rotate(angle);
+  context.globalAlpha = alpha;
+  context.beginPath();
+  context.moveTo(0, 0);
+  context.quadraticCurveTo(length * 0.4, -width, length, -width * 0.1);
+  context.quadraticCurveTo(length * 0.5, width * 0.5, 0, 0);
+  context.closePath();
+  const gradient = context.createLinearGradient(0, -width, length, 0);
+  gradient.addColorStop(0, tone(color, 0.45));
+  gradient.addColorStop(1, color);
+  context.fillStyle = gradient;
+  context.fill();
+  if (edge) { context.strokeStyle = edge; context.lineWidth = 0.5; context.stroke(); }
+  context.restore();
+}
+
+const FLYER_ENEMIES = {
+  cucavol: {
+    width: 16, height: 14, frames: 4,
+    paint(context, frame, frames) {
+      const phase = frame / frames * TAU;
+      const flap = Math.sin(phase);
+      wing(context, 9, 6.4, 8, 5, -0.9 - flap * 0.8, '#d8f0ff', { alpha: 0.75, edge: 'rgba(60,100,140,0.6)' });
+      wing(context, 11, 6.8, 7, 4, -0.3 - flap * 0.6, '#c0e0f8', { alpha: 0.6 });
+      for (const [x, dy] of [[6, 11.8], [9, 12.2], [12, 11.8]]) tube(context, x, 9.4, x + (dy > 12 ? 0 : -0.8), dy, 0.8, '#5a2a10');
+      const wiggle = Math.sin(phase * 2) * 0.6;
+      curveTube(context, [[3, 7.4], [1, 5.4 + wiggle], [-0.4, 2.6]], 0.6, '#5a2a10');
+      shadedEllipse(context, 9.4, 8.8, 5.8, 3.2, '#b8662a', { light: '#f0a456', dark: '#5a2a10' });
+      shadedEllipse(context, 3.8, 8.6, 2.6, 2.4, '#7a3a14');
+      eye(context, 3, 7.8, 0.9, { lookX: -0.9, angry: 0.6 });
+    }
+  },
+
+  mosquito: {
+    width: 16, height: 13, frames: 4,
+    paint(context, frame, frames) {
+      const phase = frame / frames * TAU;
+      const flap = Math.sin(phase * 2);
+      for (const [x, dy] of [[7, 10.6], [9, 11.2], [11, 10.6]]) tube(context, x, 8, x + 0.6, dy, 0.55, '#3a3a48');
+      wing(context, 8.6, 5.8, 8, 4.4, -1.1 - flap * 0.7, '#ffffff', { alpha: 0.6, edge: 'rgba(80,80,100,0.6)' });
+      wing(context, 10.2, 6.2, 6.6, 3.4, -0.5 - flap * 0.5, '#e8f0ff', { alpha: 0.5 });
+      shadedEllipse(context, 11.4, 7.6, 4.4, 2, '#4a4a5a', { light: '#8a8aa0' });
+      context.strokeStyle = '#d8d8e8'; context.lineWidth = 0.5; for (const x of [10, 11.8, 13.6]) { context.beginPath(); context.moveTo(x, 6); context.lineTo(x, 9.2); context.stroke(); }
+      shadedEllipse(context, 6.6, 7.4, 2.8, 2.7, '#5a5a6e', { light: '#9a9ab4' });
+      // Trompa-aguja.
+      context.strokeStyle = '#140c20'; context.lineWidth = 1.2; context.beginPath(); context.moveTo(4.6, 8); context.lineTo(0.2, 9.6); context.stroke();
+      context.strokeStyle = '#e8d8d8'; context.lineWidth = 0.55; context.beginPath(); context.moveTo(4.6, 8); context.lineTo(0.2, 9.6); context.stroke();
+      eye(context, 6, 6.8, 1.2, { lookX: -0.9, angry: 0.7, pupil: '#d41c1c' });
+    }
+  },
+
+  gaviota: {
+    width: 16, height: 13, frames: 4,
+    paint(context, frame, frames) {
+      const phase = frame / frames * TAU;
+      const flap = Math.sin(phase);
+      wing(context, 9, 6, 11, 5, -0.5 - flap * 0.95, '#cfd4e0', { edge: 'rgba(40,40,70,0.5)' });
+      context.fillStyle = '#2a2e48'; context.save(); context.translate(9, 6); context.rotate(-0.5 - flap * 0.95); context.beginPath(); context.moveTo(8.4, -0.6); context.lineTo(11, -0.5); context.lineTo(8.8, 1.2); context.closePath(); context.fill(); context.restore();
+      shadedEllipse(context, 10.2, 8.2, 5.4, 3, '#ffffff', { light: '#ffffff', dark: '#a8b0c8' });
+      curveTube(context, [[14, 8.4], [16, 9], [17, 8]], 1.6, '#e8ecf4');
+      wing(context, 9.6, 7, 9, 4, 0.4 + flap * 0.5, '#ffffff', { alpha: 0.9, edge: 'rgba(40,40,70,0.4)' });
+      shadedEllipse(context, 4.8, 6.6, 3, 2.7, '#ffffff', { dark: '#b8c0d8' });
+      context.fillStyle = '#ffc42a'; context.beginPath(); context.moveTo(2.2, 6.4); context.lineTo(-0.6, 7.2); context.lineTo(2.4, 8.2); context.closePath(); context.fill();
+      context.fillStyle = '#e8402a'; context.fillRect(0.2, 7.4, 0.9, 0.5);
+      eye(context, 4.4, 6, 1.1, { lookX: -0.9, angry: 0.7 });
+      tube(context, 9, 10.4, 8, 12.4, 0.7, '#ffa42a');
+    }
+  },
+
+  meiga: {
+    width: 16, height: 14, frames: 4,
+    paint(context, frame, frames) {
+      const phase = frame / frames * TAU;
+      const bob = Math.sin(phase) * 0.5;
+      context.save();
+      context.translate(0, bob);
+      // Escoba.
+      context.strokeStyle = '#6a4220'; context.lineWidth = 1.2; context.beginPath(); context.moveTo(0, 12); context.lineTo(14, 11); context.stroke();
+      context.fillStyle = '#d8a850';
+      context.beginPath(); context.moveTo(13, 9.8); context.quadraticCurveTo(17.6, 10.6, 18, 13.6); context.lineTo(13, 12.4); context.closePath(); context.fill();
+      context.strokeStyle = '#8a5a20'; context.lineWidth = 0.4; for (const dy of [10.8, 11.6, 12.4]) { context.beginPath(); context.moveTo(14, dy); context.lineTo(17.4, dy + 1); context.stroke(); }
+      // Capa ondeando.
+      context.fillStyle = '#6a2a9a';
+      const flutter = Math.sin(phase * 2) * 1.2;
+      context.beginPath(); context.moveTo(7, 6.4); context.quadraticCurveTo(11, 6 + flutter, 15.4, 9 + flutter); context.lineTo(14, 11); context.lineTo(6, 11); context.closePath(); context.fill();
+      const cloak = context.createLinearGradient(6, 6, 14, 11); cloak.addColorStop(0, 'rgba(255,255,255,0.25)'); cloak.addColorStop(1, 'rgba(0,0,0,0.3)');
+      context.fillStyle = cloak; context.fill();
+      // Cabeza verde con sombrero puntiagudo.
+      shadedEllipse(context, 5.4, 7.6, 3.2, 3, '#7ad048', { light: '#c0f088', dark: '#2a7a24' });
+      context.fillStyle = '#2a1a4a';
+      context.beginPath(); context.moveTo(0.4, 5.2); context.lineTo(10.4, 5.4); context.lineTo(7.4, 4.4); context.quadraticCurveTo(5.6, -1, 2.2, -3.4); context.quadraticCurveTo(3, 1.4, 0.4, 5.2); context.closePath(); context.fill();
+      context.fillStyle = '#e8b82a'; context.fillRect(3, 3.6, 4.2, 0.9);
+      context.fillStyle = '#7ad048'; context.beginPath(); context.moveTo(2.4, 8.6); context.lineTo(0, 10.8); context.lineTo(3.4, 9.8); context.closePath(); context.fill();
+      eye(context, 4.4, 7.4, 1.1, { lookX: -0.9, angry: 0.7, pupil: '#d41c1c' });
+      mouth(context, 5.4, 9.6, 2.2, 'grin');
+      context.restore();
+    }
+  },
+
+  murcielago: {
+    width: 16, height: 12, frames: 4,
+    paint(context, frame, frames) {
+      const phase = frame / frames * TAU;
+      const flap = Math.sin(phase);
+      for (const side of [-1, 1]) {
+        context.save();
+        context.translate(8, 5.6);
+        context.scale(side, 1);
+        context.rotate(-flap * 0.6);
+        context.beginPath();
+        context.moveTo(0, 0);
+        context.lineTo(7, -3 + flap * 2); context.quadraticCurveTo(7.4, 0.6, 6.4, 1.6); context.quadraticCurveTo(5, 0.4, 4.2, 2.2); context.quadraticCurveTo(3, 0.8, 1.6, 2.6);
+        context.closePath();
+        const membrane = context.createLinearGradient(0, -3, 7, 3);
+        membrane.addColorStop(0, '#9a6ad8'); membrane.addColorStop(1, '#4a2a7a');
+        context.fillStyle = membrane; context.fill();
+        context.strokeStyle = '#2a1648'; context.lineWidth = 0.4; context.stroke();
+        context.restore();
+      }
+      shadedEllipse(context, 8, 7, 3, 3.6, '#6a4a9a', { light: '#b090e8', dark: '#2a1648' });
+      // Orejas y cara.
+      context.fillStyle = '#6a4a9a'; for (const x of [5.6, 10.4]) { context.beginPath(); context.moveTo(x - 0.9, 4.4); context.lineTo(x, 1.2); context.lineTo(x + 0.9, 4.4); context.closePath(); context.fill(); }
+      eye(context, 6.8, 5.6, 1.1, { lookX: -0.8, angry: 0.6, pupil: '#d41c1c' }); eye(context, 9.4, 5.6, 1.1, { lookX: -0.8, angry: -0.6, pupil: '#d41c1c' });
+      context.fillStyle = '#ffffff'; context.beginPath(); context.moveTo(7.2, 8); context.lineTo(7.6, 9.2); context.lineTo(8, 8); context.moveTo(8.6, 8); context.lineTo(9, 9.2); context.lineTo(9.4, 8); context.fill();
+      sheen(context, 7.4, 5.4, 0.9, 0.4, -0.3, 0.3);
+    }
+  }
+};
+return { FLYER_ENEMIES };
+})();
+
+// ─── src/graphics/itemArt.js ───
+const __module_src_graphics_itemArt_js = (() => {
+/**
+ * @file Dibujo vectorial de los objetos: peseta, bocadillo, pimiento, churros,
+ * décimo de lotería, proyectiles, jamón, tortilla, receta y maleta.
+ */
+const { TAU, curveTube, shadedEllipse, shadedRect, sheen, sparkle } = __module_src_graphics_creatureKit_js;
+const { roundedPath } = __module_src_graphics_shapes_js;
+
+const ITEM_ART = {
+  peseta: {
+    width: 16, height: 14, frames: 3, frameNames: index => `peseta_spin${index}`,
+    paint(context, frame) {
+      const squeeze = [1, 0.55, 0.16][frame];
+      context.save();
+      context.translate(8, 7);
+      context.scale(squeeze, 1);
+      shadedEllipse(context, 0, 0, 6.2, 6.2, '#ffd23a', { light: '#fff6a8', dark: '#c8861c' });
+      context.strokeStyle = '#c8861c'; context.lineWidth = 0.7; context.beginPath(); context.arc(0, 0, 4.4, 0, TAU); context.stroke();
+      context.fillStyle = '#c8861c'; context.font = 'bold 6px sans-serif';
+      roundedPath(context, -1.4, -2.4, 2.8, 4.8, 1); context.fill();
+      context.fillStyle = '#fff6a8'; context.fillRect(-0.6, -1.6, 0.8, 3);
+      sheen(context, -2.2, -3, 1.6, 0.8, -0.7, 0.7);
+      context.restore();
+    }
+  },
+  bocadillo: {
+    width: 16, height: 16, frames: 1,
+    paint(context) {
+      shadedEllipse(context, 8, 11.6, 7.4, 3.6, '#e0a050', { light: '#ffd890', dark: '#8a5420' });
+      // Relleno: lechuga, jamón y queso.
+      context.fillStyle = '#58c850'; context.beginPath(); context.moveTo(1.4, 9.6); for (let x = 1.4; x <= 14.6; x += 2.4) context.quadraticCurveTo(x + 1.2, 11.4, x + 2.4, 9.6); context.lineTo(14.6, 8.6); context.lineTo(1.4, 8.6); context.fill();
+      shadedRect(context, 1.6, 7.4, 12.8, 2, 0.8, '#ff8a9a');
+      shadedRect(context, 2, 6.2, 12, 1.6, 0.6, '#ffd84a');
+      // Pan de arriba con semillas.
+      shadedEllipse(context, 8, 5.6, 7.2, 3.8, '#e8ac5c', { light: '#ffe0a0', dark: '#9a6028' });
+      context.fillStyle = '#fff2c8'; for (const [x, y] of [[4.4, 4.2], [7.6, 3], [10.6, 4], [6, 6], [9.6, 6.2]]) { context.beginPath(); context.ellipse(x, y, 0.7, 0.4, 0.4, 0, TAU); context.fill(); }
+      sheen(context, 5.4, 3, 2.2, 0.8, -0.2, 0.5);
+    }
+  },
+  pimiento: {
+    width: 16, height: 16, frames: 1,
+    paint(context) {
+      context.save(); context.translate(8, 9); context.rotate(0.35);
+      context.beginPath(); context.moveTo(-3.4, -5); context.quadraticCurveTo(-6, 2, -1.2, 7); context.quadraticCurveTo(1.2, 8, 2.2, 4.4); context.quadraticCurveTo(6.2, -1, 3.4, -5); context.quadraticCurveTo(0, -7, -3.4, -5); context.closePath();
+      const gradient = context.createLinearGradient(-5, -5, 5, 6); gradient.addColorStop(0, '#9af060'); gradient.addColorStop(0.5, '#2eb83a'); gradient.addColorStop(1, '#0e6a28');
+      context.fillStyle = gradient; context.fill();
+      sheen(context, -1.8, -2, 1.2, 3, 0.2, 0.55);
+      curveTube(context, [[0, -6], [0.8, -8], [2.4, -8.6]], 1.4, '#3a8a2a');
+      context.restore();
+    }
+  },
+  churros: {
+    width: 16, height: 16, frames: 1,
+    paint(context) {
+      for (const [x, tilt] of [[4.4, -0.2], [8, 0], [11.6, 0.2]]) {
+        context.save(); context.translate(x, 7); context.rotate(tilt);
+        shadedRect(context, -1.5, -6, 3, 12, 1.4, '#e8a848', { light: '#ffe0a0', dark: '#a8641c' });
+        context.strokeStyle = 'rgba(120,60,10,0.55)'; context.lineWidth = 0.35; for (let y = -5; y < 5; y += 1.6) { context.beginPath(); context.moveTo(-1.2, y); context.lineTo(1.2, y + 0.6); context.stroke(); }
+        context.restore();
+      }
+      // Taza de chocolate.
+      context.beginPath(); context.moveTo(1.6, 8.6); context.lineTo(14.4, 8.6); context.quadraticCurveTo(14, 15.4, 8, 15.4); context.quadraticCurveTo(2, 15.4, 1.6, 8.6); context.closePath();
+      const cup = context.createLinearGradient(0, 8, 0, 15.4); cup.addColorStop(0, '#ffffff'); cup.addColorStop(1, '#b8bcd0'); context.fillStyle = cup; context.fill();
+      shadedEllipse(context, 8, 8.6, 6.8, 1.6, '#5a2c14', { light: '#8a4a2a' });
+      context.strokeStyle = '#d8dce8'; context.lineWidth = 1; context.beginPath(); context.arc(14.6, 11.4, 1.8, -1.4, 1.4); context.stroke();
+      context.fillStyle = '#2a64d8'; context.fillRect(3.4, 11.8, 9.2, 0.9);
+    }
+  },
+  loteria: {
+    width: 16, height: 14, frames: 1,
+    paint(context) {
+      shadedRect(context, 0.6, 0.6, 14.8, 12.8, 1.6, '#3cb86a', { vertical: true });
+      shadedRect(context, 1.8, 1.8, 12.4, 10.4, 1, '#fff8e8', { vertical: true });
+      context.fillStyle = '#d41c1c'; context.fillRect(2.4, 8.6, 5.6, 2.8);
+      context.fillStyle = '#ffc42a'; context.fillRect(9.6, 8.6, 3.6, 2.8);
+      context.fillStyle = '#3a2a20'; for (let digit = 0; digit < 5; digit++) context.fillRect(2.8 + digit * 2.2, 3, 1.4, 3.2);
+      sheen(context, 4, 2.2, 3, 0.5, 0, 0.5);
+    }
+  },
+  pimiento_lanzado: {
+    width: 8, height: 8, frames: 1,
+    paint(context) {
+      context.fillStyle = '#ffb02a'; context.beginPath(); context.moveTo(5.4, 2.2); context.quadraticCurveTo(8, 4, 5.6, 6); context.quadraticCurveTo(6.6, 4, 5.4, 2.2); context.fill();
+      shadedEllipse(context, 3.6, 4, 3.2, 2.4, '#e02a2a', { light: '#ff8a7a', dark: '#8a0e10' });
+      curveTube(context, [[1.4, 3], [0.4, 2], [0.2, 1]], 0.8, '#2eb83a');
+    }
+  },
+  chancla: {
+    width: 8, height: 8, frames: 1,
+    paint(context) {
+      shadedEllipse(context, 4, 4.4, 3.6, 2.4, '#2a8af0', { light: '#9ad0ff', dark: '#1448a8' });
+      context.strokeStyle = '#ffffff'; context.lineWidth = 0.9; context.beginPath(); context.moveTo(2.4, 5.4); context.lineTo(4.4, 2.8); context.lineTo(5.4, 5.4); context.stroke();
+    }
+  },
+  factura: {
+    width: 8, height: 9, frames: 1,
+    paint(context) {
+      shadedRect(context, 0.4, 0.4, 7.2, 8.2, 0.8, '#fffdf4', { dark: '#c8c8d8' });
+      context.fillStyle = '#4a4a5a'; for (const y of [1.8, 3.2, 4.6]) context.fillRect(1.2, y, 5.6, 0.6);
+      context.strokeStyle = '#d41c1c'; context.lineWidth = 0.7; context.beginPath(); context.arc(4.8, 6.6, 1.3, 0, TAU); context.stroke();
+    }
+  },
+  petardo: {
+    width: 6, height: 11, frames: 1,
+    paint(context) {
+      shadedRect(context, 0.6, 3, 4.8, 7.6, 1, '#e02a2a', { light: '#ff8a7a', dark: '#8a0e10' });
+      context.fillStyle = '#ffd84a'; context.fillRect(0.6, 5.6, 4.8, 1);
+      curveTube(context, [[3, 3], [3.6, 1.6], [2.4, 0.8]], 0.6, '#3a3a44');
+      sparkle(context, 2.2, 0.6, 1.8, '#fff2a0');
+    }
+  },
+  jamon: {
+    width: 12, height: 12, frames: 1,
+    paint(context) {
+      context.fillStyle = '#e8d8c0'; roundedPath(context, 5.2, 0.6, 1.8, 3.4, 0.8); context.fill();
+      context.beginPath(); context.moveTo(2.6, 4); context.quadraticCurveTo(0, 7.4, 2.6, 10.6); context.quadraticCurveTo(7.4, 12, 10.4, 8.2); context.quadraticCurveTo(10.4, 3.6, 6, 3.2); context.closePath();
+      const meat = context.createLinearGradient(1, 3, 10, 11); meat.addColorStop(0, '#d8545a'); meat.addColorStop(0.6, '#a82c34'); meat.addColorStop(1, '#6a1218'); context.fillStyle = meat; context.fill();
+      context.fillStyle = '#ffe8d8'; context.beginPath(); context.ellipse(4.4, 8, 1.6, 2.4, 0.4, 0, TAU); context.fill();
+      sheen(context, 4, 4.8, 1.4, 0.7, -0.6, 0.55);
+      context.fillStyle = '#4a3a30'; roundedPath(context, 5.4, -0.6, 1.4, 1.4, 0.6); context.fill();
+    }
+  },
+  tortilla: {
+    width: 16, height: 12, frames: 1,
+    paint(context) {
+      shadedEllipse(context, 8, 9, 7.8, 2.6, '#ffffff', { dark: '#b8bcd0' });
+      shadedEllipse(context, 8, 7, 6.8, 3.8, '#f4c850', { light: '#fff0a0', dark: '#b87a1c' });
+      context.fillStyle = 'rgba(255,255,255,0.4)'; for (const [x, y] of [[5, 6], [8.6, 5], [11, 7]]) { context.beginPath(); context.ellipse(x, y, 1, 0.5, 0, 0, TAU); context.fill(); }
+      context.fillStyle = '#d89a2a'; for (const [x, y] of [[4.6, 8], [10.4, 8.4], [7.6, 8.6]]) { context.beginPath(); context.arc(x, y, 0.55, 0, TAU); context.fill(); }
+      sheen(context, 6, 4.6, 2.6, 0.8, -0.2, 0.5);
+    }
+  },
+  receta: {
+    width: 12, height: 11, frames: 1,
+    paint(context) {
+      shadedRect(context, 0.8, 1, 10.4, 9, 1.2, '#f6dfa8', { dark: '#c8a060' });
+      context.fillStyle = '#c8a060'; roundedPath(context, 0, 0.2, 12, 2.2, 1.1); context.fill(); roundedPath(context, 0, 8.6, 12, 2.2, 1.1); context.fill();
+      context.fillStyle = '#6a4a28'; for (const [y, width] of [[3.4, 7], [5, 5.6], [6.6, 6.4]]) context.fillRect(2.2, y, width, 0.7);
+      context.fillStyle = '#d41c1c'; context.beginPath(); context.arc(9, 6.8, 1, 0, TAU); context.fill();
+    }
+  },
+  maleta: {
+    width: 16, height: 16, frames: 1,
+    paint(context) {
+      curveTube(context, [[5, 4.6], [5, 1.6], [11, 1.6], [11, 4.6]], 1.2, '#4a3a30');
+      shadedRect(context, 0.8, 4, 14.4, 11, 2, '#b8662a', { light: '#e8a060', dark: '#6a3414' });
+      context.fillStyle = '#4a2a10'; context.fillRect(0.8, 8, 14.4, 0.9); context.fillRect(4, 4.4, 1, 10.4); context.fillRect(11, 4.4, 1, 10.4);
+      context.fillStyle = '#ffd84a'; context.beginPath(); context.arc(8, 10, 1.1, 0, TAU); context.fill();
+      for (const [x, y, color] of [[2.6, 12, '#3ab8ff'], [12.4, 6, '#ff5a8a'], [12, 12.4, '#7ad048']]) { context.fillStyle = color; context.beginPath(); context.arc(x, y, 1.2, 0, TAU); context.fill(); }
+      sheen(context, 4, 6, 1.6, 0.7, -0.4, 0.45);
+    }
+  }
+};
+return { ITEM_ART };
+})();
+
+// ─── src/graphics/enemyArt.js ───
+const __module_src_graphics_enemyArt_js = (() => {
+/**
+ * @file Genera los sprites de enemigos y objetos a partir de sus dibujos
+ * vectoriales (humanos, animales, voladores y objetos).
+ *
+ * Nombres que produce, para que el resto del juego no cambie:
+ *   - `<id>_frame1…N` para cada fotograma del ciclo de animación,
+ *   - `<id>_<postura>` (o `<id>_<postura>_frame1…N`) para otras posturas,
+ *   - `<id>_squashed` para el enemigo aplastado.
+ */
+const { createCreatureSprite } = __module_src_graphics_creatureKit_js;
+const { HUMAN_ENEMIES } = __module_src_graphics_enemyArtHumans_js;
+const { ANIMAL_ENEMIES } = __module_src_graphics_enemyArtAnimals_js;
+const { FLYER_ENEMIES } = __module_src_graphics_enemyArtFlyers_js;
+const { ITEM_ART } = __module_src_graphics_itemArt_js;
+
+/** Todos los dibujos, por identificador. */
+const ALL_ART = { ...HUMAN_ENEMIES, ...ANIMAL_ENEMIES, ...FLYER_ENEMIES, ...ITEM_ART };
+
+/**
+ * Crea todos los sprites vectoriales.
+ * @returns {Object<string, {image: HTMLCanvasElement, padding: number, width: number, height: number}>}
+ */
+function createVectorSprites() {
+  const sprites = {};
+  for (const [id, art] of Object.entries(ALL_ART)) {
+    const poses = art.poses || ['frame'];
+    for (const pose of poses) {
+      const count = (art.poseFrames && art.poseFrames[pose]) || (pose === 'frame' ? art.frames : (art.poseFrames ? 1 : art.frames));
+      for (let index = 0; index < count; index++) {
+        let name;
+        if (art.frameNames) name = art.frameNames(index);
+        else if (pose === 'frame') name = art.frames === 1 && !art.poses ? id : `${id}_frame${index + 1}`;
+        else name = count === 1 ? `${id}_${pose}` : `${id}_${pose}_frame${index + 1}`;
+        sprites[name] = createCreatureSprite(art.width, art.height, context => art.paint(context, index, count, pose));
+      }
+    }
+    if (art.squashed) {
+      sprites[`${id}_squashed`] = createCreatureSprite(art.width, Math.min(art.height, 16), context => {
+        // El dibujo aplastado se pinta en la mitad inferior de una caja de 16 de alto.
+        context.translate(0, Math.min(art.height, 16) - 16);
+        art.squashed(context);
+      });
+    }
+  }
+  return sprites;
+}
+return { createVectorSprites };
+})();
+
 // ─── src/graphics/sprites.js ───
 const __module_src_graphics_sprites_js = (() => {
 /**
@@ -2952,6 +4067,7 @@ const { PIXEL_COLORS, TRANSPARENT_PIXEL } = __module_src_graphics_palette_js;
 const { SPRITE_DEFINITIONS, findSpriteDefinitionProblems } = __module_src_graphics_spriteData_js;
 const { createHdSprite } = __module_src_graphics_hd_js;
 const { PACO_POSES, PACO_PALETTES, createPacoSprite } = __module_src_graphics_pacoArt_js;
+const { createVectorSprites } = __module_src_graphics_enemyArt_js;
 const { pacoSpriteName } = __module_src_graphics_spriteData_js;
 
 /**
@@ -3013,6 +4129,18 @@ function padRowsAtTop(rows, targetHeight) {
   return Array(targetHeight - rows.length).fill(emptyRow).concat(rows);
 }
 
+/** Sustituye los sprites pixelados de Paco por su dibujo vectorial animado. */
+function buildPacoSprites() {
+  for (const variant of Object.keys(PACO_PALETTES)) {
+    for (const size of ['small', 'big']) {
+      for (const pose of PACO_POSES) {
+        const { image, padding, width, height } = createPacoSprite(size, pose, variant);
+        SPRITES[pacoSpriteName(size, pose, variant)] = { image, mirroredImage: createMirroredImage(image), width, height, padding };
+      }
+    }
+  }
+}
+
 /**
  * Convierte todas las definiciones en imágenes. Debe llamarse una vez al arrancar.
  * Si algún sprite está mal definido, avisa por la consola.
@@ -3021,7 +4149,11 @@ function buildSprites() {
   const problems = findSpriteDefinitionProblems(PIXEL_COLORS);
   if (problems.length) console.warn('Sprites con problemas:', problems);
 
+  // Los enemigos, objetos y Paco tienen dibujo vectorial; el pixel art solo
+  // se convierte para lo que no lo tenga.
+  const vectorSprites = createVectorSprites();
   for (const [name, definition] of Object.entries(SPRITE_DEFINITIONS)) {
+    if (vectorSprites[name] || name.startsWith('paco_')) continue;
     const rows = padRowsAtTop(definition.rows, definition.height);
     const colors = { ...PIXEL_COLORS, ...(definition.colors || {}) };
     const { image, padding } = createHdSprite(paintPixelRows(rows, colors));
@@ -3033,19 +4165,10 @@ function buildSprites() {
       padding
     };
   }
-  buildPacoSprites();
-}
-
-/** Sustituye los sprites pixelados de Paco por su dibujo vectorial animado. */
-function buildPacoSprites() {
-  for (const variant of Object.keys(PACO_PALETTES)) {
-    for (const size of ['small', 'big']) {
-      for (const pose of PACO_POSES) {
-        const { image, padding, width, height } = createPacoSprite(size, pose, variant);
-        SPRITES[pacoSpriteName(size, pose, variant)] = { image, mirroredImage: createMirroredImage(image), width, height, padding };
-      }
-    }
+  for (const [name, sprite] of Object.entries(vectorSprites)) {
+    SPRITES[name] = { ...sprite, mirroredImage: createMirroredImage(sprite.image) };
   }
+  buildPacoSprites();
 }
 
 /**
@@ -3192,72 +4315,6 @@ function recordAchievement({ unlockedLevel = 0, score = 0 }) {
   return progress;
 }
 return { loadProgress, saveProgress, recordAchievement };
-})();
-
-// ─── src/graphics/shapes.js ───
-const __module_src_graphics_shapes_js = (() => {
-/**
- * @file Formas vectoriales con contorno oscuro y degradado, y resplandores
- * aditivos. Las usan los decorados, enemigos y efectos para tener todos el
- * mismo aspecto de dibujo animado.
- */
-const { OUTLINE_COLOR } = __module_src_graphics_hd_js;
-
-/** Camino de un rectángulo con esquinas redondeadas (compatible con navegadores sin roundRect). */
-function roundedPath(context, x, y, width, height, radius) {
-  context.beginPath();
-  if (context.roundRect) context.roundRect(x, y, width, height, radius);
-  else context.rect(x, y, width, height);
-}
-
-/**
- * Rellena el camino actual con un degradado vertical y le dibuja el contorno oscuro.
- * @param {CanvasRenderingContext2D} context
- * @param {string} topColor
- * @param {string} bottomColor
- * @param {number} top Altura donde empieza el degradado.
- * @param {number} bottom Altura donde termina.
- * @param {number} [lineWidth]
- */
-function fillWithOutline(context, topColor, bottomColor, top, bottom, lineWidth = 0.8) {
-  const gradient = context.createLinearGradient(0, top, 0, bottom);
-  gradient.addColorStop(0, topColor);
-  gradient.addColorStop(1, bottomColor);
-  context.fillStyle = gradient;
-  context.fill();
-  context.strokeStyle = OUTLINE_COLOR;
-  context.lineWidth = lineWidth;
-  context.lineJoin = 'round';
-  context.stroke();
-}
-
-/** Círculo con degradado y contorno. */
-function outlinedCircle(context, x, y, radius, topColor, bottomColor, lineWidth = 0.8) {
-  context.beginPath();
-  context.arc(x, y, radius, 0, Math.PI * 2);
-  fillWithOutline(context, topColor, bottomColor, y - radius, y + radius, lineWidth);
-}
-
-/**
- * Resplandor aditivo circular.
- * @param {CanvasRenderingContext2D} context
- * @param {number} x
- * @param {number} y
- * @param {number} radius
- * @param {string} rgb Componentes "r, g, b" del color.
- * @param {number} intensity Opacidad en el centro (0 a 1).
- */
-function addGlow(context, x, y, radius, rgb, intensity) {
-  context.save();
-  context.globalCompositeOperation = 'lighter';
-  const gradient = context.createRadialGradient(x, y, 0, x, y, radius);
-  gradient.addColorStop(0, `rgba(${rgb}, ${intensity})`);
-  gradient.addColorStop(1, `rgba(${rgb}, 0)`);
-  context.fillStyle = gradient;
-  context.fillRect(x - radius, y - radius, radius * 2, radius * 2);
-  context.restore();
-}
-return { roundedPath, fillWithOutline, outlinedCircle, addGlow };
 })();
 
 // ─── src/graphics/uiKit.js ───
@@ -8121,6 +9178,19 @@ class Enemy extends Entity {
   }
 
   /**
+   * Nombre del sprite del fotograma actual de una animación con cualquier
+   * número de fotogramas (`<prefijo>_frame1`, `<prefijo>_frame2`…).
+   * @param {string} prefix
+   * @param {number} [stepsPerFrame] Pasos de simulación que dura cada fotograma.
+   * @returns {string}
+   */
+  getFrameName(prefix, stepsPerFrame = 8) {
+    let frameCount = 0;
+    while (SPRITES[`${prefix}_frame${frameCount + 1}`]) frameCount++;
+    return `${prefix}_frame${(Math.floor(this.ageInSteps / stepsPerFrame) % Math.max(1, frameCount)) + 1}`;
+  }
+
+  /**
    * Fotograma de la animación de dos pasos (cambia cada 8 pasos de simulación).
    * @param {number} [stepsPerFrame]
    * @returns {1|2}
@@ -8178,7 +9248,7 @@ class WalkingEnemy extends Enemy {
   draw(context, cameraX) {
     const spriteName = this.squashedStepsLeft > 0
       ? `${this.profile.spriteName}_squashed`
-      : `${this.profile.spriteName}_frame${this.getAnimationFrame()}`;
+      : this.getFrameName(this.profile.spriteName, 6);
     // Los sprites de enemigos miran a la izquierda: se reflejan al ir a la derecha.
     this.drawCenteredSprite(context, spriteName, cameraX, { mirrored: this.facing > 0 });
   }
@@ -8370,7 +9440,7 @@ class ShellEnemy extends Enemy {
    */
   draw(context, cameraX) {
     if (this.state === SHELL_STATE.WALKING && !this.isKnockedOut) {
-      this.drawCenteredSprite(context, `${this.profile.spriteName}_frame${this.getAnimationFrame()}`, cameraX, { mirrored: this.facing > 0 });
+      this.drawCenteredSprite(context, this.getFrameName(this.profile.spriteName, 7), cameraX, { mirrored: this.facing > 0 });
       return;
     }
     const isAboutToComeOut = this.state === SHELL_STATE.HIDING && this.hidingStepsLeft < SHAKE_WARNING_STEPS;
@@ -8432,7 +9502,7 @@ class FlyingEnemy extends Enemy {
    * @param {number} cameraX
    */
   draw(context, cameraX) {
-    this.drawCenteredSprite(context, `${this.profile.spriteName}_frame${this.getAnimationFrame()}`, cameraX, { mirrored: this.facing > 0 });
+    this.drawCenteredSprite(context, this.getFrameName(this.profile.spriteName, 4), cameraX, { mirrored: this.facing > 0 });
   }
 }
 return { FlyingEnemy };
@@ -8554,11 +9624,11 @@ class ChargingBull extends Enemy {
     let spriteName = 'toro_frame1';
     let shakeOffset = 0;
     if (this.state === BULL_STATE.PREPARING) {
-      spriteName = (this.ageInSteps >> 2) & 1 ? 'toro_angry' : 'toro_frame1';
+      spriteName = (this.ageInSteps >> 2) & 1 ? this.getFrameName('toro_angry', 4) : 'toro_frame1';
       shakeOffset = this.ageInSteps & 1 ? 1 : -1;
     } else if (this.velocityX) {
-      const stepsPerFrame = this.state === BULL_STATE.CHARGING ? 4 : 8;
-      spriteName = `toro_frame${this.getAnimationFrame(stepsPerFrame)}`;
+      const isCharging = this.state === BULL_STATE.CHARGING;
+      spriteName = this.getFrameName(isCharging ? 'toro_angry' : 'toro', isCharging ? 3 : 7);
     }
     this.drawCenteredSprite(context, spriteName, cameraX, { mirrored: this.facing > 0, offsetX: shakeOffset });
   }
@@ -8672,7 +9742,7 @@ class PopUpOctopus extends Enemy {
    * @param {number} cameraX
    */
   draw(context, cameraX) {
-    const sprite = SPRITES[`pulpo_frame${this.getAnimationFrame(16)}`];
+    const sprite = SPRITES[this.getFrameName('pulpo', 8)];
     // Se dibuja detrás de las baldosas: el tonel tapa la parte que está dentro.
     drawSprite(context, sprite, this.centerX - 8 - cameraX, this.y - 1, { upsideDown: this.isKnockedOut });
   }
@@ -9111,7 +10181,7 @@ class TaxInspectorBoss extends Enemy {
     const isBlinking = this.invulnerableSteps > 0 && (this.invulnerableSteps >> 2) % 2 === 0 && !this.isDefeated;
     if (isBlinking) return;
     const looksHurt = this.isDefeated || this.invulnerableSteps > INVULNERABLE_STEPS_AFTER_STOMP - 20;
-    const spriteName = looksHurt ? 'hacienda_hurt' : `hacienda_frame${this.getAnimationFrame()}`;
+    const spriteName = looksHurt ? 'hacienda_hurt' : this.getFrameName('hacienda', 12);
     // Siempre mira hacia Paco (el sprite original mira a la izquierda).
     const sprite = SPRITES[spriteName];
     drawSprite(context, sprite, this.centerX - 16 - cameraX, this.bottom - sprite.height, { mirrored: !this.isFacingPlayerOnLeft, upsideDown: this.isDefeated });

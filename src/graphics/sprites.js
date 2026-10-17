@@ -12,6 +12,7 @@ import { PIXEL_COLORS, TRANSPARENT_PIXEL } from './palette.js';
 import { SPRITE_DEFINITIONS, findSpriteDefinitionProblems } from './spriteData.js';
 import { createHdSprite } from './hd.js';
 import { PACO_POSES, PACO_PALETTES, createPacoSprite } from './pacoArt.js';
+import { createVectorSprites } from './enemyArt.js';
 import { pacoSpriteName } from './spriteData.js';
 
 /**
@@ -73,6 +74,18 @@ function padRowsAtTop(rows, targetHeight) {
   return Array(targetHeight - rows.length).fill(emptyRow).concat(rows);
 }
 
+/** Sustituye los sprites pixelados de Paco por su dibujo vectorial animado. */
+function buildPacoSprites() {
+  for (const variant of Object.keys(PACO_PALETTES)) {
+    for (const size of ['small', 'big']) {
+      for (const pose of PACO_POSES) {
+        const { image, padding, width, height } = createPacoSprite(size, pose, variant);
+        SPRITES[pacoSpriteName(size, pose, variant)] = { image, mirroredImage: createMirroredImage(image), width, height, padding };
+      }
+    }
+  }
+}
+
 /**
  * Convierte todas las definiciones en imágenes. Debe llamarse una vez al arrancar.
  * Si algún sprite está mal definido, avisa por la consola.
@@ -81,7 +94,11 @@ export function buildSprites() {
   const problems = findSpriteDefinitionProblems(PIXEL_COLORS);
   if (problems.length) console.warn('Sprites con problemas:', problems);
 
+  // Los enemigos, objetos y Paco tienen dibujo vectorial; el pixel art solo
+  // se convierte para lo que no lo tenga.
+  const vectorSprites = createVectorSprites();
   for (const [name, definition] of Object.entries(SPRITE_DEFINITIONS)) {
+    if (vectorSprites[name] || name.startsWith('paco_')) continue;
     const rows = padRowsAtTop(definition.rows, definition.height);
     const colors = { ...PIXEL_COLORS, ...(definition.colors || {}) };
     const { image, padding } = createHdSprite(paintPixelRows(rows, colors));
@@ -93,19 +110,10 @@ export function buildSprites() {
       padding
     };
   }
-  buildPacoSprites();
-}
-
-/** Sustituye los sprites pixelados de Paco por su dibujo vectorial animado. */
-function buildPacoSprites() {
-  for (const variant of Object.keys(PACO_PALETTES)) {
-    for (const size of ['small', 'big']) {
-      for (const pose of PACO_POSES) {
-        const { image, padding, width, height } = createPacoSprite(size, pose, variant);
-        SPRITES[pacoSpriteName(size, pose, variant)] = { image, mirroredImage: createMirroredImage(image), width, height, padding };
-      }
-    }
+  for (const [name, sprite] of Object.entries(vectorSprites)) {
+    SPRITES[name] = { ...sprite, mirroredImage: createMirroredImage(sprite.image) };
   }
+  buildPacoSprites();
 }
 
 /**

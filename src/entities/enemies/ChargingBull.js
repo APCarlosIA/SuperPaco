@@ -112,11 +112,11 @@ export class ChargingBull extends Enemy {
     let spriteName = 'toro_frame1';
     let shakeOffset = 0;
     if (this.state === BULL_STATE.PREPARING) {
-      spriteName = (this.ageInSteps >> 2) & 1 ? 'toro_angry' : 'toro_frame1';
+      spriteName = (this.ageInSteps >> 2) & 1 ? this.getFrameName('toro_angry', 4) : 'toro_frame1';
       shakeOffset = this.ageInSteps & 1 ? 1 : -1;
     } else if (this.velocityX) {
-      const stepsPerFrame = this.state === BULL_STATE.CHARGING ? 4 : 8;
-      spriteName = `toro_frame${this.getAnimationFrame(stepsPerFrame)}`;
+      const isCharging = this.state === BULL_STATE.CHARGING;
+      spriteName = this.getFrameName(isCharging ? 'toro_angry' : 'toro', isCharging ? 3 : 7);
     }
     this.drawCenteredSprite(context, spriteName, cameraX, { mirrored: this.facing > 0, offsetX: shakeOffset });
   }

@@ -47,6 +47,6 @@ export class FlyingEnemy extends Enemy {
    * @param {number} cameraX
    */
   draw(context, cameraX) {
-    this.drawCenteredSprite(context, `${this.profile.spriteName}_frame${this.getAnimationFrame()}`, cameraX, { mirrored: this.facing > 0 });
+    this.drawCenteredSprite(context, this.getFrameName(this.profile.spriteName, 4), cameraX, { mirrored: this.facing > 0 });
   }
 }

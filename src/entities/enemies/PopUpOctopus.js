@@ -102,7 +102,7 @@ export class PopUpOctopus extends Enemy {
    * @param {number} cameraX
    */
   draw(context, cameraX) {
-    const sprite = SPRITES[`pulpo_frame${this.getAnimationFrame(16)}`];
+    const sprite = SPRITES[this.getFrameName('pulpo', 8)];
     // Se dibuja detrás de las baldosas: el tonel tapa la parte que está dentro.
     drawSprite(context, sprite, this.centerX - 8 - cameraX, this.y - 1, { upsideDown: this.isKnockedOut });
   }

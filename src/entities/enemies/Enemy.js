@@ -174,6 +174,19 @@ export class Enemy extends Entity {
   }
 
   /**
+   * Nombre del sprite del fotograma actual de una animación con cualquier
+   * número de fotogramas (`<prefijo>_frame1`, `<prefijo>_frame2`…).
+   * @param {string} prefix
+   * @param {number} [stepsPerFrame] Pasos de simulación que dura cada fotograma.
+   * @returns {string}
+   */
+  getFrameName(prefix, stepsPerFrame = 8) {
+    let frameCount = 0;
+    while (SPRITES[`${prefix}_frame${frameCount + 1}`]) frameCount++;
+    return `${prefix}_frame${(Math.floor(this.ageInSteps / stepsPerFrame) % Math.max(1, frameCount)) + 1}`;
+  }
+
+  /**
    * Fotograma de la animación de dos pasos (cambia cada 8 pasos de simulación).
    * @param {number} [stepsPerFrame]
    * @returns {1|2}
