@@ -6,13 +6,14 @@
  *   cielo → fondo lejano → fuegos artificiales → fondo cercano → decorados →
  *   entidades "detrás" → baldosas → plataformas → entidades → Paco → efectos → lluvia → marcador.
  */
-import { SCREEN_WIDTH, SCREEN_HEIGHT, TILE_SIZE, GROUND_SURFACE_Y, GROUND_TOP_ROW } from '../config/constants.js';
+import { SCREEN_WIDTH, SCREEN_HEIGHT, TILE_SIZE, GROUND_SURFACE_Y, GROUND_TOP_ROW, RENDER_SCALE } from '../config/constants.js';
+import { OUTLINE_COLOR } from '../graphics/hd.js';
 import { fillRectangle, fillCircle, fillTriangle } from '../core/canvas.js';
 import { SPRITES, drawSprite } from '../graphics/sprites.js';
 import { drawText, measureTextWidth } from '../graphics/font.js';
-import { BACKGROUND_LAYER_WIDTH, PARALLAX_FACTORS } from '../graphics/backgroundImages.js';
+import { BACKGROUND_LAYER_WIDTH, PARALLAX_FACTORS } from '../graphics/backgroundConstants.js';
 import { TILE_ANIMATION_FRAMES } from '../graphics/tileImages.js';
-import { getCloudImage, getGroundDecorationImage, getBarImage, BAR_SIZE } from '../graphics/decorationImages.js';
+import { getGroundDecorationImage, getBarImage, BAR_SIZE } from '../graphics/decorationImages.js';
 import { TILE, isSolidTile } from '../world/tileTypes.js';
 import { GOAL_POLE_TOP_ROW } from '../world/LevelBuilder.js';
 import { HAM_START_Y } from './GoalSequence.js';
@@ -29,32 +30,34 @@ const STANDING_ROW = GROUND_TOP_ROW - 1;
 /**
  * Dibuja una capa del fondo repetida en horizontal con desplazamiento parallax.
  * @param {CanvasRenderingContext2D} context Dónde dibujar.
- * @param {HTMLCanvasElement} layerImage
+ * @param {HTMLCanvasElement} layerImage Capa en alta resolución.
  * @param {number} cameraX
  * @param {number} parallaxFactor
  */
 function drawRepeatingLayer(context, layerImage, cameraX, parallaxFactor) {
-  const offset = -Math.floor((cameraX * parallaxFactor) % BACKGROUND_LAYER_WIDTH);
-  context.drawImage(layerImage, offset, 0);
-  context.drawImage(layerImage, offset + BACKGROUND_LAYER_WIDTH, 0);
+  const offset = -Math.floor(((cameraX * parallaxFactor) % BACKGROUND_LAYER_WIDTH) * RENDER_SCALE) / RENDER_SCALE;
+  context.drawImage(layerImage, offset, 0, BACKGROUND_LAYER_WIDTH, SCREEN_HEIGHT);
+  context.drawImage(layerImage, offset + BACKGROUND_LAYER_WIDTH, 0, BACKGROUND_LAYER_WIDTH, SCREEN_HEIGHT);
 }
 
 /**
- * Dibuja el cielo, el sol (si lo hay), las dos capas del fondo y los fuegos artificiales.
+ * Dibuja el cielo, las tres capas del fondo y los fuegos artificiales.
  * @param {CanvasRenderingContext2D} context Dónde dibujar.
  * @param {import('../graphics/backgroundImages.js').BackgroundImages} backgroundImages
  * @param {import('../world/themes.js').Theme} theme
  * @param {number} cameraX
  * @param {Array<{x:number,y:number,color:string,ageInSteps:number}>} [fireworkParticles]
  */
-export function drawBackground(context, backgroundImages, theme, cameraX, fireworkParticles = []) {
+export function drawBackground(context, backgroundImages, theme, cameraX, fireworkParticles = [], stepCounter = 0) {
   context.drawImage(backgroundImages.sky, 0, 0, SCREEN_WIDTH, SCREEN_HEIGHT);
-  if (theme.sun) fillCircle(context, theme.sun.x, theme.sun.y, theme.sun.radius, theme.sun.color);
+  // Las nubes avanzan solas despacio, además del parallax con la cámara.
+  if (backgroundImages.cloudLayer) drawRepeatingLayer(context, backgroundImages.cloudLayer, cameraX * 0.5 + stepCounter * 0.15, PARALLAX_FACTORS.farLayer * 0.6);
   drawRepeatingLayer(context, backgroundImages.farLayer, cameraX, PARALLAX_FACTORS.farLayer);
   for (const particle of fireworkParticles) {
     const isFadingOut = particle.ageInSteps >= 30 && particle.ageInSteps % 4 >= 2;
     fillRectangle(context, particle.x, particle.y, 2, 2, isFadingOut ? '#fcfcfc' : particle.color);
   }
+  drawRepeatingLayer(context, backgroundImages.midLayer, cameraX, PARALLAX_FACTORS.midLayer);
   drawRepeatingLayer(context, backgroundImages.nearLayer, cameraX, PARALLAX_FACTORS.nearLayer);
 }
 
@@ -107,9 +110,37 @@ export function drawTileLayer(context, { tileMap, tileImages, theme, blockBumpOf
         continue;
       }
       const image = chooseTileImage(tile, { tileMap, tileImages, theme, column, row, pingPongFrame, liquidFrame });
-      if (image) context.drawImage(image, screenX, screenY);
+      if (image) context.drawImage(image, screenX, screenY, TILE_SIZE, TILE_SIZE);
+      if (tile === TILE.GROUND) drawGroundOutline(context, tileMap, column, row, screenX, screenY);
+      else if (tile === TILE.QUESTION_BLOCK) drawBlockGlow(context, screenX, screenY, stepCounter, column);
     }
   }
+}
+
+/** Grosor (en píxeles lógicos) del contorno oscuro del terreno. */
+const OUTLINE_WIDTH = 2 / RENDER_SCALE * 1.5;
+
+/** Contorno oscuro en los bordes del suelo que dan al aire (arriba, huecos laterales). */
+function drawGroundOutline(context, tileMap, column, row, screenX, screenY) {
+  const isOpen = (c, r) => r >= 0 && r < tileMap.heightInTiles && c >= 0 && c < tileMap.widthInTiles && !isSolidTile(tileMap.getTile(c, r));
+  context.fillStyle = OUTLINE_COLOR;
+  if (row > 0 && isOpen(column, row - 1)) context.fillRect(screenX, screenY - OUTLINE_WIDTH * 0.6, TILE_SIZE, OUTLINE_WIDTH * 1.2);
+  if (isOpen(column - 1, row)) context.fillRect(screenX, screenY, OUTLINE_WIDTH, TILE_SIZE);
+  if (isOpen(column + 1, row)) context.fillRect(screenX + TILE_SIZE - OUTLINE_WIDTH, screenY, OUTLINE_WIDTH, TILE_SIZE);
+  if (isOpen(column, row + 1)) context.fillRect(screenX, screenY + TILE_SIZE - OUTLINE_WIDTH, TILE_SIZE, OUTLINE_WIDTH);
+}
+
+/** Resplandor pulsante alrededor de los bloques "¿?". */
+function drawBlockGlow(context, screenX, screenY, stepCounter, column) {
+  const pulse = 0.5 + 0.5 * Math.sin(stepCounter / 14 + column);
+  context.save();
+  context.globalCompositeOperation = 'lighter';
+  const gradient = context.createRadialGradient(screenX + 8, screenY + 8, 2, screenX + 8, screenY + 8, 20);
+  gradient.addColorStop(0, `rgba(255, 190, 70, ${0.22 + pulse * 0.16})`);
+  gradient.addColorStop(1, 'rgba(255, 150, 40, 0)');
+  context.fillStyle = gradient;
+  context.fillRect(screenX - 14, screenY - 14, 44, 44);
+  context.restore();
 }
 
 /** @private Imagen que corresponde a cada tipo de baldosa. */
@@ -212,7 +243,7 @@ export function drawDecorations(context, { decorations, theme, isCheckpointReach
     const isFarOffScreen = screenX < -130 || screenX > SCREEN_WIDTH + 40;
     if (isFarOffScreen) continue;
     switch (decoration.type) {
-      case 'cloud': context.drawImage(getCloudImage(Boolean(theme.isNight)), screenX, decoration.row * TILE_SIZE); break;
+      case 'cloud': break; // las nubes son ahora parte del fondo
       case 'sign': drawSign(context, screenX, decoration.text); break;
       case 'checkpoint': drawCheckpointFlag(context, screenX, isCheckpointReached); break;
       case 'goalPole': drawGoalPole(context, screenX, hamY === null ? HAM_START_Y : hamY); break;

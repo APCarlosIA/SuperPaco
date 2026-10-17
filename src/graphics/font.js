@@ -2,11 +2,14 @@
  * @file Dibujo de texto con la fuente bitmap del juego.
  *
  * Todos los caracteres se pintan una vez en blanco en un "atlas" (una tira de
- * letras). Para escribir en un color se genera una copia teñida del atlas, que
- * se guarda en caché. Escribir es copiar trocitos del atlas: rápido y siempre
- * pixelado, sin depender de fuentes instaladas en el ordenador.
+ * letras). Cada texto distinto se convierte en una imagen de alta resolución
+ * (letras suavizadas, degradado, contorno y sombra) que se guarda en caché.
+ * Así el aspecto es el mismo en cualquier ordenador, sin depender de las
+ * fuentes instaladas.
  */
+import { RENDER_SCALE } from '../config/constants.js';
 import { createCanvas } from '../core/canvas.js';
+import { scale3x, addOutline } from './hd.js';
 import { GLYPH_BITMAPS, ACCENT_MARKS, ACCENTED_CHARACTERS, GLYPH_WIDTH } from './fontGlyphs.js';
 
 /** Ancho que ocupa cada carácter en pantalla (5 píxeles de letra + 1 de separación). */
@@ -23,8 +26,6 @@ const FALLBACK_CHARACTER = '?';
 
 /** Atlas en blanco con todas las letras; se crea al llamar a {@link buildFont}. */
 let whiteAtlas = null;
-/** Copias del atlas teñidas de cada color usado. */
-const tintedAtlasCache = new Map();
 
 /**
  * Pinta una matriz de bits en el atlas.
@@ -56,24 +57,6 @@ export function buildFont() {
 }
 
 /**
- * Devuelve (y guarda en caché) el atlas teñido de un color.
- * @param {string} color
- * @returns {HTMLCanvasElement}
- */
-function getTintedAtlas(color) {
-  if (!tintedAtlasCache.has(color)) {
-    tintedAtlasCache.set(color, createCanvas(whiteAtlas.width, whiteAtlas.height, context => {
-      context.drawImage(whiteAtlas, 0, 0);
-      // 'source-in' conserva la forma de las letras y sustituye su color.
-      context.globalCompositeOperation = 'source-in';
-      context.fillStyle = color;
-      context.fillRect(0, 0, whiteAtlas.width, whiteAtlas.height);
-    }));
-  }
-  return tintedAtlasCache.get(color);
-}
-
-/**
  * Calcula el ancho en píxeles que ocupará un texto.
  * @param {string} text
  * @param {number} [scale] Factor de ampliación.
@@ -83,54 +66,122 @@ export function measureTextWidth(text, scale = 1) {
   return text.length ? (text.length * CHARACTER_ADVANCE - 1) * scale : 0;
 }
 
+/** Imágenes de texto ya generadas (la clave incluye texto, color y estilo). */
+const textImageCache = new Map();
+const MAX_CACHED_TEXT_IMAGES = 600;
+
 /**
- * Pinta una línea de texto en un solo color, sin alineación ni efectos.
- * @private
+ * Aclara (`amount` > 0) u oscurece (`amount` < 0) un color `#rrggbb`.
+ * Los demás formatos se devuelven sin cambios.
  */
-function paintTextRun(context, text, left, top, color, scale) {
-  const atlas = getTintedAtlas(color);
-  for (let index = 0; index < text.length; index++) {
-    const character = text[index];
-    if (character === ' ') continue;
-    const atlasPosition = ATLAS_INDEX.has(character) ? ATLAS_INDEX.get(character) : ATLAS_INDEX.get(FALLBACK_CHARACTER);
-    context.drawImage(
-      atlas,
-      atlasPosition * CHARACTER_ADVANCE, 0, CHARACTER_ADVANCE, ATLAS_CELL_HEIGHT,
-      left + index * CHARACTER_ADVANCE * scale, top - ACCENT_ROWS * scale, CHARACTER_ADVANCE * scale, ATLAS_CELL_HEIGHT * scale
-    );
-  }
+function shiftColor(color, amount) {
+  const match = /^#([0-9a-f]{6})$/i.exec(color);
+  if (!match) return color;
+  const channels = [0, 2, 4].map(offset => parseInt(match[1].slice(offset, offset + 2), 16));
+  const shifted = channels.map(value => Math.round(amount > 0 ? value + (255 - value) * amount : value * (1 + amount)));
+  return `rgb(${shifted[0]}, ${shifted[1]}, ${shifted[2]})`;
 }
 
-/** Desplazamientos para dibujar un contorno de 1 píxel alrededor del texto. */
-const OUTLINE_OFFSETS = [[-1, 0], [1, 0], [0, -1], [0, 1], [1, 1], [-1, 1], [1, -1], [-1, -1]];
+/** Pinta el texto en blanco con el atlas, a tamaño original (1 píxel por píxel de la fuente). */
+function paintWhiteText(text) {
+  return createCanvas(text.length * CHARACTER_ADVANCE, ATLAS_CELL_HEIGHT, context => {
+    for (let index = 0; index < text.length; index++) {
+      const character = text[index];
+      if (character === ' ') continue;
+      const atlasPosition = ATLAS_INDEX.has(character) ? ATLAS_INDEX.get(character) : ATLAS_INDEX.get(FALLBACK_CHARACTER);
+      context.drawImage(whiteAtlas, atlasPosition * CHARACTER_ADVANCE, 0, CHARACTER_ADVANCE, ATLAS_CELL_HEIGHT, index * CHARACTER_ADVANCE, 0, CHARACTER_ADVANCE, ATLAS_CELL_HEIGHT);
+    }
+  });
+}
+
+/**
+ * Genera la imagen de alta resolución de un texto: letras suavizadas con
+ * degradado, contorno grueso opcional y sombra opcional.
+ * @private
+ * @returns {{canvas: HTMLCanvasElement, padding: number}} `padding` en píxeles de alta resolución.
+ */
+function createTextImage(text, color, scale, shadowColor, outlineColor) {
+  const targetScale = RENDER_SCALE * scale;
+  const white = paintWhiteText(text);
+  // Las letras pequeñas se amplían tal cual (así se leen mejor); los títulos grandes
+  // pasan por Scale3x para redondear las diagonales.
+  const enlarged = scale > 1 ? scale3x(white) : white;
+  const fill = createCanvas(white.width * targetScale, white.height * targetScale, context => {
+    context.imageSmoothingEnabled = scale > 1;
+    context.imageSmoothingQuality = 'high';
+    context.drawImage(enlarged, 0, 0, white.width * targetScale, white.height * targetScale);
+    const gradient = context.createLinearGradient(0, ACCENT_ROWS * targetScale, 0, (ACCENT_ROWS + 7) * targetScale);
+    gradient.addColorStop(0, shiftColor(color, 0.3));
+    gradient.addColorStop(0.5, color);
+    gradient.addColorStop(1, shiftColor(color, -0.22));
+    context.globalCompositeOperation = 'source-in';
+    context.fillStyle = gradient;
+    context.fillRect(0, 0, white.width * targetScale, white.height * targetScale);
+  });
+
+  const outlineThickness = outlineColor ? Math.max(2, Math.round(targetScale * 0.85)) : 0;
+  const shadowOffset = shadowColor ? Math.max(2, Math.round(targetScale * 0.9)) : 0;
+  const padding = Math.max(outlineThickness, 0) + (shadowOffset ? 1 : 0);
+  const body = outlineColor ? addOutline(fill, outlineThickness, outlineColor) : fill;
+  const bodyPadding = outlineColor ? outlineThickness : 0;
+  const canvas = createCanvas(fill.width + (bodyPadding + padding) + shadowOffset, fill.height + (bodyPadding + padding) + shadowOffset, context => {
+    if (shadowColor) {
+      const shadow = createCanvas(body.width, body.height, shadowContext => {
+        shadowContext.drawImage(body, 0, 0);
+        shadowContext.globalCompositeOperation = 'source-in';
+        shadowContext.fillStyle = shadowColor;
+        shadowContext.fillRect(0, 0, body.width, body.height);
+      });
+      context.drawImage(shadow, padding + shadowOffset, padding + shadowOffset);
+    }
+    context.drawImage(body, padding, padding);
+  });
+  return { canvas, padding: padding + bodyPadding };
+}
+
+/** Devuelve (y guarda en caché) la imagen de un texto con su estilo. */
+function getTextImage(text, color, scale, shadowColor, outlineColor) {
+  const cacheKey = `${text}|${color}|${scale}|${shadowColor || ''}|${outlineColor || ''}`;
+  let image = textImageCache.get(cacheKey);
+  if (!image) {
+    if (textImageCache.size >= MAX_CACHED_TEXT_IMAGES) textImageCache.clear();
+    image = createTextImage(text, color, scale, shadowColor, outlineColor);
+    textImageCache.set(cacheKey, image);
+  }
+  return image;
+}
 
 /**
  * Escribe una línea de texto. El texto se convierte a mayúsculas porque la
  * fuente solo tiene letras mayúsculas (como en las consolas de 8 bits).
  *
- * @param {CanvasRenderingContext2D} context Dónde dibujar.
+ * @param {CanvasRenderingContext2D} context Dónde dibujar (ya ampliado a alta resolución).
  * @param {string|number} text
  * @param {number} x Posición horizontal (según la alineación).
  * @param {number} y Parte superior de las letras (las tildes quedan 2 px por encima).
  * @param {string} [color] Color CSS de las letras.
  * @param {Object} [options]
  * @param {'left'|'center'|'right'} [options.align] Alineación respecto a `x`.
- * @param {number} [options.scale] Ampliación entera (2 = letras el doble de grandes).
+ * @param {number} [options.scale] Ampliación (2 = letras el doble de grandes).
  * @param {string} [options.shadowColor] Si se indica, dibuja una sombra desplazada.
  * @param {string} [options.outlineColor] Si se indica, dibuja un contorno alrededor.
  */
 export function drawText(context, text, x, y, color = '#fcfcfc', { align = 'left', scale = 1, shadowColor, outlineColor } = {}) {
   const upperText = String(text).toUpperCase();
-  let left = Math.round(x);
-  if (align === 'center') left = Math.round(x - measureTextWidth(upperText, scale) / 2);
-  else if (align === 'right') left = Math.round(x - measureTextWidth(upperText, scale));
-  const top = Math.round(y);
-
-  if (shadowColor) paintTextRun(context, upperText, left + scale, top + scale, shadowColor, scale);
-  if (outlineColor) {
-    for (const [offsetX, offsetY] of OUTLINE_OFFSETS) paintTextRun(context, upperText, left + offsetX * scale, top + offsetY * scale, outlineColor, scale);
-  }
-  paintTextRun(context, upperText, left, top, color, scale);
+  if (!upperText.length) return;
+  let left = x;
+  if (align === 'center') left = x - measureTextWidth(upperText, scale) / 2;
+  else if (align === 'right') left = x - measureTextWidth(upperText, scale);
+  const { canvas, padding } = getTextImage(upperText, color, scale, shadowColor, outlineColor);
+  const snappedLeft = Math.round(left * RENDER_SCALE) / RENDER_SCALE;
+  const snappedTop = Math.round(y * RENDER_SCALE) / RENDER_SCALE;
+  context.drawImage(
+    canvas,
+    snappedLeft - padding / RENDER_SCALE,
+    snappedTop - ACCENT_ROWS * scale - padding / RENDER_SCALE,
+    canvas.width / RENDER_SCALE,
+    canvas.height / RENDER_SCALE
+  );
 }
 
 /**

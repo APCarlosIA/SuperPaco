@@ -87,7 +87,7 @@ export class TitleScreen {
   draw(context) {
     const madridAssets = getThemeAssets('madrid');
     const scrollX = this.stepCounter * BACKGROUND_SCROLL_SPEED;
-    drawBackground(context, madridAssets.backgroundImages, madridAssets.theme, scrollX);
+    drawBackground(context, madridAssets.backgroundImages, madridAssets.theme, scrollX, [], this.stepCounter);
     this.drawScrollingGround(context, madridAssets.tileImages, scrollX);
     this.drawLogo(context);
     this.drawMenu(context);
@@ -100,8 +100,8 @@ export class TitleScreen {
     const { groundSurface, groundFill } = tileImages;
     const offset = -Math.floor(scrollX % TILE_SIZE);
     for (let x = offset; x < SCREEN_WIDTH; x += TILE_SIZE) {
-      context.drawImage(groundSurface, x, GROUND_SURFACE_Y);
-      context.drawImage(groundFill, x, GROUND_SURFACE_Y + TILE_SIZE);
+      context.drawImage(groundSurface, x, GROUND_SURFACE_Y, TILE_SIZE, TILE_SIZE);
+      context.drawImage(groundFill, x, GROUND_SURFACE_Y + TILE_SIZE, TILE_SIZE, TILE_SIZE);
     }
   }
 

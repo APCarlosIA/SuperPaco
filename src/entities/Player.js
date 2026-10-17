@@ -17,6 +17,7 @@ import { randomBetween } from '../core/math.js';
 import { soundEngine, SOUND_EFFECT } from '../audio/soundEngine.js';
 import { SPRITES, drawSprite } from '../graphics/sprites.js';
 import { pacoSpriteName } from '../graphics/spriteData.js';
+import { screenFx } from '../graphics/screenFx.js';
 import { TILE } from '../world/tileTypes.js';
 import { GAMEPLAY_MESSAGES } from '../world/texts.js';
 import { moveHorizontally, moveVertically, isAreaFree, pixelToTile } from '../world/tileCollision.js';
@@ -53,6 +54,12 @@ export class Player extends Entity {
     this.jumpBufferStepsLeft = 0;
     /** Avanza al caminar para alternar los fotogramas de las piernas. */
     this.walkAnimationProgress = 0;
+    /** Aplastamiento al aterrizar (0 = normal); se recupera solo con el tiempo. */
+    this.landingSquash = 0;
+    /** Estiramiento al despegar (0 = normal). */
+    this.takeOffStretch = 0;
+    /** Últimas posiciones, para dibujar la estela al correr. */
+    this.trail = [];
     this.isCrouching = false;
     /** Plataforma móvil sobre la que está de pie (o null). */
     this.ridingPlatform = null;
@@ -138,7 +145,10 @@ export class Player extends Entity {
     this.updateHorizontalSpeed(controls);
     this.updateJumpAndGravity(controls);
     this.tryThrowFireball(controls, world);
+    const wasOnGround = this.isOnGround;
+    const fallSpeed = this.velocityY;
     this.moveAndCollide(world);
+    this.updateVisualFeedback(world, wasOnGround, fallSpeed);
     if (this.isDead) return;
 
     if (this.isOnGround && Math.abs(this.velocityX) > 0.1) this.walkAnimationProgress += Math.abs(this.velocityX) * 0.13;
@@ -330,13 +340,49 @@ export class Player extends Entity {
     return false;
   }
 
+  /**
+   * @private
+   * Efectos puramente visuales: aplastamiento al caer, estiramiento al saltar,
+   * polvo, estela al correr y el temblor de los aterrizajes fuertes.
+   */
+  updateVisualFeedback(world, wasOnGround, fallSpeed) {
+    this.landingSquash *= 0.82;
+    this.takeOffStretch *= 0.85;
+    if (!wasOnGround && this.isOnGround && fallSpeed > 1.5) {
+      this.landingSquash = Math.min(0.42, fallSpeed * 0.06);
+      for (let puff = 0; puff < 4; puff++) world.spawnDust(this.centerX + (puff - 1.5) * 3, this.bottom - 1);
+      if (fallSpeed > 5.2) screenFx.shake(0.8, 6);
+    }
+    if (wasOnGround && !this.isOnGround && this.velocityY < -2) {
+      this.takeOffStretch = 0.2;
+      world.spawnDust(this.centerX, this.bottom - 1);
+    }
+    // Estela: solo cuando va rápido.
+    const isFast = Math.abs(this.velocityX) > 2.3 || this.isInvincible;
+    if (isFast && this.ageInSteps % 2 === 0) {
+      this.trail.push({ x: this.centerX, bottom: this.bottom, facing: this.facing, life: 9 });
+    }
+    for (const ghost of this.trail) ghost.life--;
+    this.trail = this.trail.filter(ghost => ghost.life > 0);
+    // Polvo al derrapar o al arrancar a correr.
+    if (this.isOnGround && Math.abs(this.velocityX) > 1.0 && this.velocityX * this.facing < -0.6 && this.ageInSteps % 3 === 0) {
+      world.spawnDust(this.centerX - this.facing * 4, this.bottom - 1);
+    }
+  }
+
   /** @private Elige la postura según lo que esté haciendo. */
   choosePose(isDrawnBig) {
     if (this.isDead) return 'dead';
-    if (this.isHoldingGoalPole || !this.isOnGround) return 'jump';
+    if (this.isHoldingGoalPole) return 'pole';
+    if (!this.isOnGround) return this.velocityY < 0.4 ? 'jumpUp' : 'jumpDown';
     if (this.isCrouching && isDrawnBig) return 'crouch';
-    if (Math.abs(this.velocityX) > 0.1) return Math.floor(this.walkAnimationProgress) % 2 ? 'walk2' : 'walk1';
-    return 'stand';
+    const speed = Math.abs(this.velocityX);
+    if (speed > 1.0 && this.velocityX * this.facing < -0.6) return 'skid';
+    if (speed > 0.1) {
+      const frame = (Math.floor(this.walkAnimationProgress * 2) % 8) + 1;
+      return `${speed > 2.0 ? 'run' : 'walk'}${frame}`;
+    }
+    return Math.floor(this.ageInSteps / 28) % 2 ? 'stand2' : 'stand';
   }
 
   /** @private Elige los colores: parpadeo de churros, verde picante o normal. */
@@ -357,7 +403,17 @@ export class Player extends Entity {
     let isDrawnBig = this.isBig && !this.isDead;
     if (this.growAnimationSteps > 0) isDrawnBig = (this.growAnimationSteps >> 2) % 2 === 0;
     const size = isDrawnBig ? 'big' : 'small';
-    const sprite = SPRITES[pacoSpriteName(size, this.choosePose(isDrawnBig), this.chooseColorVariant())];
-    drawSprite(context, sprite, this.centerX - 8 - cameraX, this.bottom - sprite.height, { mirrored: this.facing < 0 });
+    const variant = this.chooseColorVariant();
+    const sprite = SPRITES[pacoSpriteName(size, this.choosePose(isDrawnBig), variant)];
+    const stretch = this.takeOffStretch + Math.min(0.14, Math.abs(this.velocityY) * 0.018) * (this.isOnGround ? 0 : 1);
+    const squash = this.landingSquash;
+    const scaleY = 1 + stretch - squash * 0.9;
+    const scaleX = 1 - stretch * 0.6 + squash * 0.7;
+
+    // Estela de imágenes fantasma al correr rápido.
+    for (const ghost of this.trail) {
+      drawSprite(context, sprite, ghost.x - 8 - cameraX, ghost.bottom - sprite.height, { mirrored: ghost.facing < 0, alpha: ghost.life / 26 });
+    }
+    drawSprite(context, sprite, this.centerX - 8 - cameraX, this.bottom - sprite.height, { mirrored: this.facing < 0, scaleX, scaleY });
   }
 }

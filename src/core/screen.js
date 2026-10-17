@@ -1,20 +1,24 @@
 /**
  * @file Pantalla del juego: el canvas visible y su escalado a la ventana.
  *
- * El juego dibuja siempre sobre un lienzo pequeño de 320×240 píxeles y el
- * navegador lo amplía con `image-rendering: pixelated`, de modo que cada píxel
- * del juego se ve como un bloque nítido, igual que en una consola de 8 bits.
+ * El juego razona en coordenadas de 320×240, pero dibuja sobre un lienzo de
+ * trabajo 3 veces mayor (960×720). Después, `present()` lo pasa al lienzo
+ * visible con el acabado de imagen (resplandor, contraste, viñeta, temblor…).
  *
  * Este módulo no toca el documento al importarse: la pantalla se crea al
  * arrancar con {@link createGameScreen}. Así la lógica del juego se puede
  * cargar en Node (tests) sin navegador.
  */
-import { SCREEN_WIDTH, SCREEN_HEIGHT } from '../config/constants.js';
+import { SCREEN_WIDTH, SCREEN_HEIGHT, RENDER_SCALE } from '../config/constants.js';
+import { createCanvas } from './canvas.js';
+import { createPostProcessor } from '../graphics/postProcess.js';
 
 /**
  * @typedef {Object} GameScreen
  * @property {HTMLCanvasElement} canvas Elemento `<canvas>` visible.
- * @property {CanvasRenderingContext2D} context Contexto donde se dibuja cada fotograma.
+ * @property {CanvasRenderingContext2D} context Contexto de trabajo (ya ampliado) donde se dibuja cada fotograma.
+ * @property {() => CanvasRenderingContext2D} beginFrame Prepara el contexto para un nuevo fotograma.
+ * @property {() => void} present Aplica el acabado y muestra el fotograma.
  */
 
 /**
@@ -24,20 +28,30 @@ import { SCREEN_WIDTH, SCREEN_HEIGHT } from '../config/constants.js';
  */
 export function createGameScreen(canvasElementId) {
   const canvas = document.getElementById(canvasElementId);
-  const context = canvas.getContext('2d', { alpha: false });
-  context.imageSmoothingEnabled = false;
-  return { canvas, context };
+  canvas.width = SCREEN_WIDTH * RENDER_SCALE;
+  canvas.height = SCREEN_HEIGHT * RENDER_SCALE;
+  const sceneCanvas = createCanvas(canvas.width, canvas.height);
+  const context = sceneCanvas.getContext('2d', { alpha: false });
+  const postProcessor = createPostProcessor(canvas, sceneCanvas);
+
+  function beginFrame() {
+    context.setTransform(RENDER_SCALE, 0, 0, RENDER_SCALE, 0, 0);
+    context.globalAlpha = 1;
+    context.globalCompositeOperation = 'source-over';
+    context.imageSmoothingEnabled = false;
+    return context;
+  }
+  beginFrame();
+  return { canvas, context, beginFrame, present: postProcessor.present };
 }
 
 /**
  * Ajusta el tamaño CSS del canvas para que quepa en la ventana.
- * Si hay espacio para ampliar al menos al doble, usa un factor entero
- * (2×, 3×, 4×…) para que todos los píxeles tengan exactamente el mismo tamaño.
+ * El lienzo ya tiene alta resolución, así que se puede escalar a cualquier tamaño.
  * @param {HTMLCanvasElement} canvas
  */
 export function fitCanvasToWindow(canvas) {
-  const availableScale = Math.min(window.innerWidth / SCREEN_WIDTH, window.innerHeight / SCREEN_HEIGHT);
-  const scale = availableScale >= 2 ? Math.floor(availableScale) : availableScale;
+  const scale = Math.min(window.innerWidth / SCREEN_WIDTH, window.innerHeight / SCREEN_HEIGHT);
   canvas.style.width = Math.floor(SCREEN_WIDTH * scale) + 'px';
   canvas.style.height = Math.floor(SCREEN_HEIGHT * scale) + 'px';
 }

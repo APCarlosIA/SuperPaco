@@ -38,12 +38,11 @@ body {
   -webkit-tap-highlight-color: transparent;
 }
 
-/* Pantalla del juego: se amplía sin suavizar para mantener los píxeles nítidos. */
+/* Pantalla del juego: lienzo de alta resolución, se escala con suavizado. */
 #game {
   display: block;
   background: #000;
-  image-rendering: pixelated;
-  image-rendering: crisp-edges;
+  image-rendering: auto;
   box-shadow: 0 0 0 3px var(--screen-frame), 0 0 0 6px #000, 0 18px 60px rgba(0, 0, 0, 0.7);
   outline: none;
 }
@@ -125,6 +124,13 @@ const SCREEN_WIDTH = 320;
 
 /** Alto de la pantalla interna en píxeles. */
 const SCREEN_HEIGHT = 240;
+
+/**
+ * Factor de supersampling del dibujado. El juego sigue razonando en 320×240,
+ * pero se pinta sobre un lienzo 3 veces mayor (960×720) para poder usar arte
+ * con más detalle, contornos finos, degradados y efectos suaves.
+ */
+const RENDER_SCALE = 3;
 
 /** Lado de una baldosa (tile) en píxeles. Todo el mapa es una rejilla de baldosas. */
 const TILE_SIZE = 16;
@@ -227,7 +233,303 @@ const GAME_RULES = Object.freeze({
   maxPlayerFireballsOnScreen: 2,
   coinsInMultiCoinBlock: 8
 });
-return { SCREEN_WIDTH, SCREEN_HEIGHT, TILE_SIZE, LEVEL_ROWS, GROUND_TOP_ROW, GROUND_SURFACE_Y, SIMULATION_STEPS_PER_SECOND, CAMERA_PLAYER_SCREEN_X, PLAYER_PHYSICS, ENEMY_PHYSICS, LEVEL_TIMER, GAME_RULES };
+return { SCREEN_WIDTH, SCREEN_HEIGHT, RENDER_SCALE, TILE_SIZE, LEVEL_ROWS, GROUND_TOP_ROW, GROUND_SURFACE_Y, SIMULATION_STEPS_PER_SECOND, CAMERA_PLAYER_SCREEN_X, PLAYER_PHYSICS, ENEMY_PHYSICS, LEVEL_TIMER, GAME_RULES };
+})();
+
+// ─── src/core/canvas.js ───
+const __module_src_core_canvas_js = (() => {
+/**
+ * @file Primitivas de dibujo sobre canvas.
+ *
+ * Todas las funciones dibujan con píxeles "duros" (sin suavizado) para mantener
+ * el aspecto de 8 bits. Reciben el contexto de dibujo como parámetro, así sirven
+ * tanto para la pantalla como para imágenes generadas fuera de ella.
+ */
+
+/**
+ * Crea un canvas fuera de pantalla y, opcionalmente, dibuja en él.
+ *
+ * @param {number} width Ancho en píxeles.
+ * @param {number} height Alto en píxeles.
+ * @param {(context: CanvasRenderingContext2D, canvas: HTMLCanvasElement) => void} [drawContent]
+ *   Función que pinta el contenido inicial.
+ * @returns {HTMLCanvasElement}
+ */
+function createCanvas(width, height, drawContent) {
+  const canvas = document.createElement('canvas');
+  canvas.width = width;
+  canvas.height = height;
+  const context = canvas.getContext('2d');
+  context.imageSmoothingEnabled = false;
+  if (drawContent) drawContent(context, canvas);
+  return canvas;
+}
+
+/**
+ * Rellena un rectángulo redondeando las coordenadas a píxeles enteros.
+ * @param {CanvasRenderingContext2D} context
+ * @param {number} x
+ * @param {number} y
+ * @param {number} width
+ * @param {number} height
+ * @param {string} color Color CSS.
+ */
+function fillRectangle(context, x, y, width, height, color) {
+  context.fillStyle = color;
+  context.fillRect(Math.round(x), Math.round(y), Math.round(width), Math.round(height));
+}
+
+/**
+ * Rellena un círculo pixelado dibujándolo línea a línea.
+ * @param {CanvasRenderingContext2D} context
+ * @param {number} centerX
+ * @param {number} centerY
+ * @param {number} radius Radio en píxeles.
+ * @param {string} color Color CSS.
+ */
+function fillCircle(context, centerX, centerY, radius, color) {
+  context.fillStyle = color;
+  for (let offsetY = -radius; offsetY <= radius; offsetY++) {
+    // El pequeño margen (radius * 0.6) redondea mejor los bordes en radios pequeños.
+    const halfWidth = Math.floor(Math.sqrt(radius * radius - offsetY * offsetY + radius * 0.6));
+    context.fillRect(Math.round(centerX - halfWidth), Math.round(centerY + offsetY), halfWidth * 2 + 1, 1);
+  }
+}
+
+/**
+ * Rellena un triángulo isósceles con la punta hacia arriba.
+ * @param {CanvasRenderingContext2D} context
+ * @param {number} left Borde izquierdo de la base.
+ * @param {number} baseY Coordenada Y de la base.
+ * @param {number} width Ancho de la base.
+ * @param {number} height Altura del triángulo.
+ * @param {string} color Color CSS.
+ */
+function fillTriangle(context, left, baseY, width, height, color) {
+  context.fillStyle = color;
+  for (let line = 0; line < height; line++) {
+    const lineWidth = Math.max(1, Math.round(width * (line + 1) / height));
+    context.fillRect(Math.round(left + (width - lineWidth) / 2), Math.round(baseY - height + line), lineWidth, 1);
+  }
+}
+return { createCanvas, fillRectangle, fillCircle, fillTriangle };
+})();
+
+// ─── src/graphics/screenFx.js ───
+const __module_src_graphics_screenFx_js = (() => {
+/**
+ * @file Estado de los efectos de pantalla: temblor, destello, "golpe" de zoom,
+ * congelación de fotogramas (hit-stop) y tono de color del nivel.
+ *
+ * Es un módulo solo de datos: la lógica del juego llama a `shake`, `flash`…
+ * cuando ocurre algo contundente (pisotón, explosión, daño) y el procesador de
+ * imagen (`postProcess.js`) lee el estado al dibujar cada fotograma.
+ * No toca el navegador, así que también se puede importar desde los tests.
+ */
+
+/** Tono de color por defecto (sin corrección). */
+const NO_GRADE = Object.freeze({ color: '#000000', alpha: 0, mode: 'soft-light' });
+
+const screenFx = {
+  shakePower: 0,
+  shakeStepsLeft: 0,
+  shakeDuration: 1,
+  flashColor: '#ffffff',
+  flashAlpha: 0,
+  zoomPunch: 0,
+  hitStopStepsLeft: 0,
+  /** Corrección de color del nivel actual. */
+  grade: NO_GRADE,
+  /** Fuerza del oscurecimiento de los bordes (0 a 1). */
+  vignette: 0.5,
+  /** Fuerza del resplandor de las zonas brillantes (0 a 1). */
+  bloom: 0.28,
+
+  /**
+   * Hace temblar la pantalla.
+   * @param {number} power Desplazamiento máximo en píxeles lógicos.
+   * @param {number} steps Pasos de simulación que dura.
+   */
+  shake(power, steps = 14) {
+    if (power >= this.shakePower * (this.shakeStepsLeft / this.shakeDuration)) {
+      this.shakePower = power;
+      this.shakeStepsLeft = steps;
+      this.shakeDuration = steps;
+    }
+  },
+
+  /** Destello de color que se desvanece rápido. */
+  flash(color = '#ffffff', alpha = 0.6) {
+    this.flashColor = color;
+    this.flashAlpha = Math.max(this.flashAlpha, alpha);
+  },
+
+  /** Pequeño acercamiento de cámara que vuelve solo. */
+  punch(amount = 0.04) {
+    this.zoomPunch = Math.max(this.zoomPunch, amount);
+  },
+
+  /** Congela la simulación unos pasos para dar peso a un golpe. */
+  hitStop(steps = 4) {
+    this.hitStopStepsLeft = Math.max(this.hitStopStepsLeft, steps);
+  },
+
+  /** Indica si la simulación debe quedarse quieta en este paso (y gasta uno). */
+  consumeHitStop() {
+    if (this.hitStopStepsLeft <= 0) return false;
+    this.hitStopStepsLeft--;
+    return true;
+  },
+
+  /** Avanza los efectos un paso (siempre, aunque la simulación esté congelada). */
+  update() {
+    if (this.shakeStepsLeft > 0) this.shakeStepsLeft--;
+    this.flashAlpha = Math.max(0, this.flashAlpha - 0.045);
+    this.zoomPunch = Math.max(0, this.zoomPunch - 0.006);
+  },
+
+  /** Desplazamiento actual del temblor en píxeles lógicos. */
+  getShakeOffset() {
+    if (this.shakeStepsLeft <= 0) return { x: 0, y: 0 };
+    const strength = this.shakePower * (this.shakeStepsLeft / this.shakeDuration);
+    return { x: (Math.random() * 2 - 1) * strength, y: (Math.random() * 2 - 1) * strength };
+  },
+
+  /** Quita todos los efectos y el tono de color (al cambiar de pantalla). */
+  reset() {
+    this.shakePower = 0;
+    this.shakeStepsLeft = 0;
+    this.flashAlpha = 0;
+    this.zoomPunch = 0;
+    this.hitStopStepsLeft = 0;
+    this.grade = NO_GRADE;
+    this.vignette = 0.5;
+    this.bloom = 0.28;
+  }
+};
+return { screenFx };
+})();
+
+// ─── src/graphics/postProcess.js ───
+const __module_src_graphics_postProcess_js = (() => {
+/**
+ * @file Acabado de imagen: pasa el fotograma dibujado en el lienzo de trabajo
+ * al lienzo visible aplicando temblor, resplandor (bloom), contraste, tono de
+ * color, viñeta y destellos. Todo con operaciones estándar del canvas 2D, sin
+ * depender de filtros que algunos navegadores no tienen.
+ */
+const { SCREEN_WIDTH, SCREEN_HEIGHT, RENDER_SCALE } = __module_src_config_constants_js;
+const { createCanvas } = __module_src_core_canvas_js;
+const { screenFx } = __module_src_graphics_screenFx_js;
+
+const WIDTH = SCREEN_WIDTH * RENDER_SCALE;
+const HEIGHT = SCREEN_HEIGHT * RENDER_SCALE;
+
+/**
+ * Crea el procesador de imagen.
+ * @param {HTMLCanvasElement} displayCanvas Lienzo visible.
+ * @param {HTMLCanvasElement} sceneCanvas Lienzo donde dibuja el juego.
+ * @returns {{present: () => void}}
+ */
+function createPostProcessor(displayCanvas, sceneCanvas) {
+  const display = displayCanvas.getContext('2d', { alpha: false });
+  const bloomLarge = createCanvas(WIDTH / 4, HEIGHT / 4);
+  const bloomTemporary = createCanvas(WIDTH / 4, HEIGHT / 4);
+  const bloomSmall = createCanvas(WIDTH / 16, HEIGHT / 16);
+  const bloomLargeContext = bloomLarge.getContext('2d');
+  const bloomTemporaryContext = bloomTemporary.getContext('2d');
+  const bloomSmallContext = bloomSmall.getContext('2d');
+  for (const context of [bloomLargeContext, bloomTemporaryContext, bloomSmallContext]) {
+    context.imageSmoothingEnabled = true;
+    context.imageSmoothingQuality = 'high';
+  }
+
+  const vignetteImage = createCanvas(WIDTH, HEIGHT, context => {
+    const gradient = context.createRadialGradient(WIDTH / 2, HEIGHT / 2, HEIGHT * 0.38, WIDTH / 2, HEIGHT / 2, HEIGHT * 0.95);
+    gradient.addColorStop(0, 'rgba(8, 4, 20, 0)');
+    gradient.addColorStop(1, 'rgba(8, 4, 20, 1)');
+    context.fillStyle = gradient;
+    context.fillRect(0, 0, WIDTH, HEIGHT);
+  });
+
+  /** Resplandor: se queda solo con lo muy brillante, lo difumina y lo suma encima. */
+  function applyBloom(strength) {
+    bloomLargeContext.globalCompositeOperation = 'source-over';
+    bloomLargeContext.drawImage(sceneCanvas, 0, 0, bloomLarge.width, bloomLarge.height);
+    // Elevar al cuadrado (multiplicar consigo mismo) deja solo las zonas claras.
+    bloomTemporaryContext.drawImage(bloomLarge, 0, 0);
+    bloomLargeContext.globalCompositeOperation = 'multiply';
+    bloomLargeContext.drawImage(bloomTemporary, 0, 0);
+    bloomLargeContext.drawImage(bloomTemporary, 0, 0);
+    bloomLargeContext.drawImage(bloomTemporary, 0, 0);
+    bloomLargeContext.globalCompositeOperation = 'source-over';
+    bloomSmallContext.drawImage(bloomLarge, 0, 0, bloomSmall.width, bloomSmall.height);
+    display.save();
+    display.imageSmoothingEnabled = true;
+    display.imageSmoothingQuality = 'high';
+    display.globalCompositeOperation = 'lighter';
+    display.globalAlpha = strength;
+    display.drawImage(bloomSmall, 0, 0, WIDTH, HEIGHT);
+    display.globalAlpha = strength * 0.7;
+    display.drawImage(bloomLarge, 0, 0, WIDTH, HEIGHT);
+    display.restore();
+  }
+
+  function present() {
+    const shake = screenFx.getShakeOffset();
+    const zoom = 1 + screenFx.zoomPunch + (screenFx.shakeStepsLeft > 0 ? 0.012 : 0);
+    const isTransformed = shake.x !== 0 || shake.y !== 0 || zoom !== 1;
+
+    display.save();
+    display.globalCompositeOperation = 'source-over';
+    display.globalAlpha = 1;
+    if (isTransformed) {
+      display.imageSmoothingEnabled = true;
+      display.translate(WIDTH / 2 + shake.x * RENDER_SCALE, HEIGHT / 2 + shake.y * RENDER_SCALE);
+      display.scale(zoom, zoom);
+      display.translate(-WIDTH / 2, -HEIGHT / 2);
+    }
+    display.drawImage(sceneCanvas, 0, 0);
+    display.restore();
+
+    if (screenFx.bloom > 0) applyBloom(screenFx.bloom * 0.55);
+
+    // Contraste y saturación: mezclar la imagen consigo misma en modo "overlay".
+    display.save();
+    display.globalCompositeOperation = 'overlay';
+    display.globalAlpha = 0.22;
+    display.drawImage(sceneCanvas, 0, 0);
+    display.restore();
+
+    const grade = screenFx.grade;
+    if (grade.alpha > 0) {
+      display.save();
+      display.globalCompositeOperation = grade.mode;
+      display.globalAlpha = grade.alpha;
+      display.fillStyle = grade.color;
+      display.fillRect(0, 0, WIDTH, HEIGHT);
+      display.restore();
+    }
+
+    if (screenFx.vignette > 0) {
+      display.save();
+      display.globalAlpha = screenFx.vignette;
+      display.drawImage(vignetteImage, 0, 0);
+      display.restore();
+    }
+
+    if (screenFx.flashAlpha > 0.01) {
+      display.save();
+      display.globalAlpha = screenFx.flashAlpha;
+      display.fillStyle = screenFx.flashColor;
+      display.fillRect(0, 0, WIDTH, HEIGHT);
+      display.restore();
+    }
+  }
+
+  return { present };
+}
+return { createPostProcessor };
 })();
 
 // ─── src/core/screen.js ───
@@ -235,20 +537,24 @@ const __module_src_core_screen_js = (() => {
 /**
  * @file Pantalla del juego: el canvas visible y su escalado a la ventana.
  *
- * El juego dibuja siempre sobre un lienzo pequeño de 320×240 píxeles y el
- * navegador lo amplía con `image-rendering: pixelated`, de modo que cada píxel
- * del juego se ve como un bloque nítido, igual que en una consola de 8 bits.
+ * El juego razona en coordenadas de 320×240, pero dibuja sobre un lienzo de
+ * trabajo 3 veces mayor (960×720). Después, `present()` lo pasa al lienzo
+ * visible con el acabado de imagen (resplandor, contraste, viñeta, temblor…).
  *
  * Este módulo no toca el documento al importarse: la pantalla se crea al
  * arrancar con {@link createGameScreen}. Así la lógica del juego se puede
  * cargar en Node (tests) sin navegador.
  */
-const { SCREEN_WIDTH, SCREEN_HEIGHT } = __module_src_config_constants_js;
+const { SCREEN_WIDTH, SCREEN_HEIGHT, RENDER_SCALE } = __module_src_config_constants_js;
+const { createCanvas } = __module_src_core_canvas_js;
+const { createPostProcessor } = __module_src_graphics_postProcess_js;
 
 /**
  * @typedef {Object} GameScreen
  * @property {HTMLCanvasElement} canvas Elemento `<canvas>` visible.
- * @property {CanvasRenderingContext2D} context Contexto donde se dibuja cada fotograma.
+ * @property {CanvasRenderingContext2D} context Contexto de trabajo (ya ampliado) donde se dibuja cada fotograma.
+ * @property {() => CanvasRenderingContext2D} beginFrame Prepara el contexto para un nuevo fotograma.
+ * @property {() => void} present Aplica el acabado y muestra el fotograma.
  */
 
 /**
@@ -258,20 +564,30 @@ const { SCREEN_WIDTH, SCREEN_HEIGHT } = __module_src_config_constants_js;
  */
 function createGameScreen(canvasElementId) {
   const canvas = document.getElementById(canvasElementId);
-  const context = canvas.getContext('2d', { alpha: false });
-  context.imageSmoothingEnabled = false;
-  return { canvas, context };
+  canvas.width = SCREEN_WIDTH * RENDER_SCALE;
+  canvas.height = SCREEN_HEIGHT * RENDER_SCALE;
+  const sceneCanvas = createCanvas(canvas.width, canvas.height);
+  const context = sceneCanvas.getContext('2d', { alpha: false });
+  const postProcessor = createPostProcessor(canvas, sceneCanvas);
+
+  function beginFrame() {
+    context.setTransform(RENDER_SCALE, 0, 0, RENDER_SCALE, 0, 0);
+    context.globalAlpha = 1;
+    context.globalCompositeOperation = 'source-over';
+    context.imageSmoothingEnabled = false;
+    return context;
+  }
+  beginFrame();
+  return { canvas, context, beginFrame, present: postProcessor.present };
 }
 
 /**
  * Ajusta el tamaño CSS del canvas para que quepa en la ventana.
- * Si hay espacio para ampliar al menos al doble, usa un factor entero
- * (2×, 3×, 4×…) para que todos los píxeles tengan exactamente el mismo tamaño.
+ * El lienzo ya tiene alta resolución, así que se puede escalar a cualquier tamaño.
  * @param {HTMLCanvasElement} canvas
  */
 function fitCanvasToWindow(canvas) {
-  const availableScale = Math.min(window.innerWidth / SCREEN_WIDTH, window.innerHeight / SCREEN_HEIGHT);
-  const scale = availableScale >= 2 ? Math.floor(availableScale) : availableScale;
+  const scale = Math.min(window.innerWidth / SCREEN_WIDTH, window.innerHeight / SCREEN_HEIGHT);
   canvas.style.width = Math.floor(SCREEN_WIDTH * scale) + 'px';
   canvas.style.height = Math.floor(SCREEN_HEIGHT * scale) + 'px';
 }
@@ -1291,83 +1607,176 @@ const soundEngine = new SoundEngine();
 return { SOUND_EFFECT, soundEngine };
 })();
 
-// ─── src/core/canvas.js ───
-const __module_src_core_canvas_js = (() => {
+// ─── src/graphics/hd.js ───
+const __module_src_graphics_hd_js = (() => {
 /**
- * @file Primitivas de dibujo sobre canvas.
+ * @file Herramientas para convertir arte pixelado en imágenes de alta
+ * resolución con un acabado moderno: ampliación suavizada (Scale3x), luz y
+ * sombra en los bordes, degradado ambiental y contorno grueso.
  *
- * Todas las funciones dibujan con píxeles "duros" (sin suavizado) para mantener
- * el aspecto de 8 bits. Reciben el contexto de dibujo como parámetro, así sirven
- * tanto para la pantalla como para imágenes generadas fuera de ella.
+ * Todas las funciones trabajan sobre canvas y solo se usan en el navegador.
  */
+const { RENDER_SCALE } = __module_src_config_constants_js;
+const { createCanvas } = __module_src_core_canvas_js;
+
+/** Color del contorno de los personajes (casi negro con un toque azulado). */
+const OUTLINE_COLOR = '#140c20';
 
 /**
- * Crea un canvas fuera de pantalla y, opcionalmente, dibuja en él.
- *
- * @param {number} width Ancho en píxeles.
- * @param {number} height Alto en píxeles.
- * @param {(context: CanvasRenderingContext2D, canvas: HTMLCanvasElement) => void} [drawContent]
- *   Función que pinta el contenido inicial.
- * @returns {HTMLCanvasElement}
+ * Amplía una imagen 3 veces con el algoritmo Scale3x: las diagonales quedan
+ * suaves y los píxeles aislados (ojos, brillos) se conservan nítidos.
+ * @param {HTMLCanvasElement} source
+ * @returns {HTMLCanvasElement} Imagen de 3× el tamaño.
  */
-function createCanvas(width, height, drawContent) {
-  const canvas = document.createElement('canvas');
-  canvas.width = width;
-  canvas.height = height;
-  const context = canvas.getContext('2d');
-  context.imageSmoothingEnabled = false;
-  if (drawContent) drawContent(context, canvas);
+function scale3x(source) {
+  const width = source.width;
+  const height = source.height;
+  const input = source.getContext('2d').getImageData(0, 0, width, height);
+  const pixels = new Uint32Array(input.data.buffer);
+  const output = new ImageData(width * 3, height * 3);
+  const result = new Uint32Array(output.data.buffer);
+  const outputWidth = width * 3;
+
+  const at = (x, y) => {
+    const clampedX = x < 0 ? 0 : x >= width ? width - 1 : x;
+    const clampedY = y < 0 ? 0 : y >= height ? height - 1 : y;
+    const value = pixels[clampedY * width + clampedX];
+    return (value >>> 24) === 0 ? 0 : value;
+  };
+
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      const A = at(x - 1, y - 1), B = at(x, y - 1), C = at(x + 1, y - 1);
+      const D = at(x - 1, y), E = at(x, y), F = at(x + 1, y);
+      const G = at(x - 1, y + 1), H = at(x, y + 1), I = at(x + 1, y + 1);
+      let e0 = E, e1 = E, e2 = E, e3 = E, e5 = E, e6 = E, e7 = E, e8 = E;
+      if (B !== H && D !== F) {
+        e0 = D === B ? D : E;
+        e1 = (D === B && E !== C) || (B === F && E !== A) ? B : E;
+        e2 = B === F ? F : E;
+        e3 = (D === B && E !== G) || (D === H && E !== A) ? D : E;
+        e5 = (B === F && E !== I) || (H === F && E !== C) ? F : E;
+        e6 = D === H ? D : E;
+        e7 = (D === H && E !== I) || (H === F && E !== G) ? H : E;
+        e8 = H === F ? F : E;
+      }
+      const base = y * 3 * outputWidth + x * 3;
+      result[base] = e0; result[base + 1] = e1; result[base + 2] = e2;
+      result[base + outputWidth] = e3; result[base + outputWidth + 1] = E; result[base + outputWidth + 2] = e5;
+      result[base + 2 * outputWidth] = e6; result[base + 2 * outputWidth + 1] = e7; result[base + 2 * outputWidth + 2] = e8;
+    }
+  }
+  const canvas = createCanvas(width * 3, height * 3);
+  canvas.getContext('2d').putImageData(output, 0, 0);
   return canvas;
 }
 
 /**
- * Rellena un rectángulo redondeando las coordenadas a píxeles enteros.
+ * Aplica luz de arriba-izquierda a los píxeles del borde: aclara los que dan
+ * al cielo y oscurece los que dan al suelo. Da volumen al dibujo.
+ * @param {HTMLCanvasElement} source Imagen original (se modifica una copia).
+ * @param {{light?: number, shade?: number}} [options]
+ * @returns {HTMLCanvasElement}
+ */
+function applyEdgeLighting(source, { light = 0.28, shade = 0.24 } = {}) {
+  const width = source.width;
+  const height = source.height;
+  const image = source.getContext('2d').getImageData(0, 0, width, height);
+  const original = new Uint8ClampedArray(image.data);
+  const data = image.data;
+  const isOpaque = (x, y) => x >= 0 && y >= 0 && x < width && y < height && original[(y * width + x) * 4 + 3] > 8;
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      const index = (y * width + x) * 4;
+      if (original[index + 3] <= 8) continue;
+      let amount = 0;
+      if (!isOpaque(x, y - 1)) amount += light;
+      else if (!isOpaque(x - 1, y)) amount += light * 0.5;
+      if (!isOpaque(x, y + 1)) amount -= shade;
+      else if (!isOpaque(x + 1, y)) amount -= shade * 0.5;
+      if (amount === 0) continue;
+      for (let channel = 0; channel < 3; channel++) {
+        const value = original[index + channel];
+        data[index + channel] = amount > 0 ? value + (255 - value) * amount : value * (1 + amount);
+      }
+    }
+  }
+  return createCanvas(width, height, context => context.putImageData(image, 0, 0));
+}
+
+/**
+ * Añade un contorno grueso del color indicado alrededor de la silueta.
+ * @param {HTMLCanvasElement} source Imagen en alta resolución.
+ * @param {number} thickness Grosor en píxeles de alta resolución.
+ * @param {string} [color]
+ * @returns {HTMLCanvasElement} Imagen con `thickness` píxeles de margen por cada lado.
+ */
+function addOutline(source, thickness, color = OUTLINE_COLOR) {
+  const tinted = createCanvas(source.width, source.height, context => {
+    context.drawImage(source, 0, 0);
+    context.globalCompositeOperation = 'source-in';
+    context.fillStyle = color;
+    context.fillRect(0, 0, source.width, source.height);
+  });
+  return createCanvas(source.width + thickness * 2, source.height + thickness * 2, context => {
+    for (let offsetY = -thickness; offsetY <= thickness; offsetY++) {
+      for (let offsetX = -thickness; offsetX <= thickness; offsetX++) {
+        if (offsetX * offsetX + offsetY * offsetY > thickness * thickness + 1) continue;
+        context.drawImage(tinted, thickness + offsetX, thickness + offsetY);
+      }
+    }
+    context.drawImage(source, thickness, thickness);
+  });
+}
+
+/**
+ * Superpone un degradado suave que aclara la parte alta y oscurece la baja.
+ * Solo afecta a los píxeles ya dibujados.
+ * @param {HTMLCanvasElement} canvas Imagen en alta resolución (se modifica).
+ * @param {number} top Altura donde empieza la imagen original (para ignorar el margen).
+ * @param {number} bodyHeight Altura de la imagen original.
+ */
+function applyAmbientGradient(canvas, top, bodyHeight) {
+  const context = canvas.getContext('2d');
+  const gradient = context.createLinearGradient(0, top, 0, top + bodyHeight);
+  gradient.addColorStop(0, 'rgba(255, 244, 220, 0.16)');
+  gradient.addColorStop(0.45, 'rgba(255, 255, 255, 0)');
+  gradient.addColorStop(1, 'rgba(20, 10, 60, 0.26)');
+  context.globalCompositeOperation = 'source-atop';
+  context.fillStyle = gradient;
+  context.fillRect(0, 0, canvas.width, canvas.height);
+  context.globalCompositeOperation = 'source-over';
+}
+
+/**
+ * Convierte un dibujo pixelado en un sprite de alta resolución listo para usar.
+ * @param {HTMLCanvasElement} source Mapa de píxeles original.
+ * @param {Object} [options]
+ * @param {boolean} [options.outline] Añadir contorno grueso (por defecto sí).
+ * @param {number} [options.outlineThickness] Grosor del contorno en píxeles lógicos.
+ * @returns {{image: HTMLCanvasElement, padding: number}} `padding` en píxeles lógicos.
+ */
+function createHdSprite(source, { outline = true, outlineThickness = 1 } = {}) {
+  const lit = applyEdgeLighting(source);
+  const big = scale3x(lit);
+  applyAmbientGradient(big, 0, big.height);
+  if (!outline) return { image: big, padding: 0 };
+  const thickness = Math.round(outlineThickness * RENDER_SCALE);
+  return { image: addOutline(big, thickness), padding: outlineThickness };
+}
+
+/**
+ * Dibuja una imagen de alta resolución en el contexto (que ya está ampliado)
+ * haciendo que 1 píxel de la imagen sea 1 píxel real de pantalla.
  * @param {CanvasRenderingContext2D} context
- * @param {number} x
+ * @param {HTMLCanvasElement} image Imagen creada con las funciones de este módulo.
+ * @param {number} x Posición lógica de la esquina superior izquierda.
  * @param {number} y
- * @param {number} width
- * @param {number} height
- * @param {string} color Color CSS.
  */
-function fillRectangle(context, x, y, width, height, color) {
-  context.fillStyle = color;
-  context.fillRect(Math.round(x), Math.round(y), Math.round(width), Math.round(height));
+function drawHdImage(context, image, x, y) {
+  context.drawImage(image, Math.round(x * RENDER_SCALE) / RENDER_SCALE, Math.round(y * RENDER_SCALE) / RENDER_SCALE, image.width / RENDER_SCALE, image.height / RENDER_SCALE);
 }
-
-/**
- * Rellena un círculo pixelado dibujándolo línea a línea.
- * @param {CanvasRenderingContext2D} context
- * @param {number} centerX
- * @param {number} centerY
- * @param {number} radius Radio en píxeles.
- * @param {string} color Color CSS.
- */
-function fillCircle(context, centerX, centerY, radius, color) {
-  context.fillStyle = color;
-  for (let offsetY = -radius; offsetY <= radius; offsetY++) {
-    // El pequeño margen (radius * 0.6) redondea mejor los bordes en radios pequeños.
-    const halfWidth = Math.floor(Math.sqrt(radius * radius - offsetY * offsetY + radius * 0.6));
-    context.fillRect(Math.round(centerX - halfWidth), Math.round(centerY + offsetY), halfWidth * 2 + 1, 1);
-  }
-}
-
-/**
- * Rellena un triángulo isósceles con la punta hacia arriba.
- * @param {CanvasRenderingContext2D} context
- * @param {number} left Borde izquierdo de la base.
- * @param {number} baseY Coordenada Y de la base.
- * @param {number} width Ancho de la base.
- * @param {number} height Altura del triángulo.
- * @param {string} color Color CSS.
- */
-function fillTriangle(context, left, baseY, width, height, color) {
-  context.fillStyle = color;
-  for (let line = 0; line < height; line++) {
-    const lineWidth = Math.max(1, Math.round(width * (line + 1) / height));
-    context.fillRect(Math.round(left + (width - lineWidth) / 2), Math.round(baseY - height + line), lineWidth, 1);
-  }
-}
-return { createCanvas, fillRectangle, fillCircle, fillTriangle };
+return { OUTLINE_COLOR, scale3x, applyEdgeLighting, addOutline, applyAmbientGradient, createHdSprite, drawHdImage };
 })();
 
 // ─── src/graphics/fontGlyphs.js ───
@@ -1480,11 +1889,14 @@ const __module_src_graphics_font_js = (() => {
  * @file Dibujo de texto con la fuente bitmap del juego.
  *
  * Todos los caracteres se pintan una vez en blanco en un "atlas" (una tira de
- * letras). Para escribir en un color se genera una copia teñida del atlas, que
- * se guarda en caché. Escribir es copiar trocitos del atlas: rápido y siempre
- * pixelado, sin depender de fuentes instaladas en el ordenador.
+ * letras). Cada texto distinto se convierte en una imagen de alta resolución
+ * (letras suavizadas, degradado, contorno y sombra) que se guarda en caché.
+ * Así el aspecto es el mismo en cualquier ordenador, sin depender de las
+ * fuentes instaladas.
  */
+const { RENDER_SCALE } = __module_src_config_constants_js;
 const { createCanvas } = __module_src_core_canvas_js;
+const { scale3x, addOutline } = __module_src_graphics_hd_js;
 const { GLYPH_BITMAPS, ACCENT_MARKS, ACCENTED_CHARACTERS, GLYPH_WIDTH } = __module_src_graphics_fontGlyphs_js;
 
 /** Ancho que ocupa cada carácter en pantalla (5 píxeles de letra + 1 de separación). */
@@ -1501,8 +1913,6 @@ const FALLBACK_CHARACTER = '?';
 
 /** Atlas en blanco con todas las letras; se crea al llamar a {@link buildFont}. */
 let whiteAtlas = null;
-/** Copias del atlas teñidas de cada color usado. */
-const tintedAtlasCache = new Map();
 
 /**
  * Pinta una matriz de bits en el atlas.
@@ -1534,24 +1944,6 @@ function buildFont() {
 }
 
 /**
- * Devuelve (y guarda en caché) el atlas teñido de un color.
- * @param {string} color
- * @returns {HTMLCanvasElement}
- */
-function getTintedAtlas(color) {
-  if (!tintedAtlasCache.has(color)) {
-    tintedAtlasCache.set(color, createCanvas(whiteAtlas.width, whiteAtlas.height, context => {
-      context.drawImage(whiteAtlas, 0, 0);
-      // 'source-in' conserva la forma de las letras y sustituye su color.
-      context.globalCompositeOperation = 'source-in';
-      context.fillStyle = color;
-      context.fillRect(0, 0, whiteAtlas.width, whiteAtlas.height);
-    }));
-  }
-  return tintedAtlasCache.get(color);
-}
-
-/**
  * Calcula el ancho en píxeles que ocupará un texto.
  * @param {string} text
  * @param {number} [scale] Factor de ampliación.
@@ -1561,54 +1953,122 @@ function measureTextWidth(text, scale = 1) {
   return text.length ? (text.length * CHARACTER_ADVANCE - 1) * scale : 0;
 }
 
+/** Imágenes de texto ya generadas (la clave incluye texto, color y estilo). */
+const textImageCache = new Map();
+const MAX_CACHED_TEXT_IMAGES = 600;
+
 /**
- * Pinta una línea de texto en un solo color, sin alineación ni efectos.
- * @private
+ * Aclara (`amount` > 0) u oscurece (`amount` < 0) un color `#rrggbb`.
+ * Los demás formatos se devuelven sin cambios.
  */
-function paintTextRun(context, text, left, top, color, scale) {
-  const atlas = getTintedAtlas(color);
-  for (let index = 0; index < text.length; index++) {
-    const character = text[index];
-    if (character === ' ') continue;
-    const atlasPosition = ATLAS_INDEX.has(character) ? ATLAS_INDEX.get(character) : ATLAS_INDEX.get(FALLBACK_CHARACTER);
-    context.drawImage(
-      atlas,
-      atlasPosition * CHARACTER_ADVANCE, 0, CHARACTER_ADVANCE, ATLAS_CELL_HEIGHT,
-      left + index * CHARACTER_ADVANCE * scale, top - ACCENT_ROWS * scale, CHARACTER_ADVANCE * scale, ATLAS_CELL_HEIGHT * scale
-    );
-  }
+function shiftColor(color, amount) {
+  const match = /^#([0-9a-f]{6})$/i.exec(color);
+  if (!match) return color;
+  const channels = [0, 2, 4].map(offset => parseInt(match[1].slice(offset, offset + 2), 16));
+  const shifted = channels.map(value => Math.round(amount > 0 ? value + (255 - value) * amount : value * (1 + amount)));
+  return `rgb(${shifted[0]}, ${shifted[1]}, ${shifted[2]})`;
 }
 
-/** Desplazamientos para dibujar un contorno de 1 píxel alrededor del texto. */
-const OUTLINE_OFFSETS = [[-1, 0], [1, 0], [0, -1], [0, 1], [1, 1], [-1, 1], [1, -1], [-1, -1]];
+/** Pinta el texto en blanco con el atlas, a tamaño original (1 píxel por píxel de la fuente). */
+function paintWhiteText(text) {
+  return createCanvas(text.length * CHARACTER_ADVANCE, ATLAS_CELL_HEIGHT, context => {
+    for (let index = 0; index < text.length; index++) {
+      const character = text[index];
+      if (character === ' ') continue;
+      const atlasPosition = ATLAS_INDEX.has(character) ? ATLAS_INDEX.get(character) : ATLAS_INDEX.get(FALLBACK_CHARACTER);
+      context.drawImage(whiteAtlas, atlasPosition * CHARACTER_ADVANCE, 0, CHARACTER_ADVANCE, ATLAS_CELL_HEIGHT, index * CHARACTER_ADVANCE, 0, CHARACTER_ADVANCE, ATLAS_CELL_HEIGHT);
+    }
+  });
+}
+
+/**
+ * Genera la imagen de alta resolución de un texto: letras suavizadas con
+ * degradado, contorno grueso opcional y sombra opcional.
+ * @private
+ * @returns {{canvas: HTMLCanvasElement, padding: number}} `padding` en píxeles de alta resolución.
+ */
+function createTextImage(text, color, scale, shadowColor, outlineColor) {
+  const targetScale = RENDER_SCALE * scale;
+  const white = paintWhiteText(text);
+  // Las letras pequeñas se amplían tal cual (así se leen mejor); los títulos grandes
+  // pasan por Scale3x para redondear las diagonales.
+  const enlarged = scale > 1 ? scale3x(white) : white;
+  const fill = createCanvas(white.width * targetScale, white.height * targetScale, context => {
+    context.imageSmoothingEnabled = scale > 1;
+    context.imageSmoothingQuality = 'high';
+    context.drawImage(enlarged, 0, 0, white.width * targetScale, white.height * targetScale);
+    const gradient = context.createLinearGradient(0, ACCENT_ROWS * targetScale, 0, (ACCENT_ROWS + 7) * targetScale);
+    gradient.addColorStop(0, shiftColor(color, 0.3));
+    gradient.addColorStop(0.5, color);
+    gradient.addColorStop(1, shiftColor(color, -0.22));
+    context.globalCompositeOperation = 'source-in';
+    context.fillStyle = gradient;
+    context.fillRect(0, 0, white.width * targetScale, white.height * targetScale);
+  });
+
+  const outlineThickness = outlineColor ? Math.max(2, Math.round(targetScale * 0.85)) : 0;
+  const shadowOffset = shadowColor ? Math.max(2, Math.round(targetScale * 0.9)) : 0;
+  const padding = Math.max(outlineThickness, 0) + (shadowOffset ? 1 : 0);
+  const body = outlineColor ? addOutline(fill, outlineThickness, outlineColor) : fill;
+  const bodyPadding = outlineColor ? outlineThickness : 0;
+  const canvas = createCanvas(fill.width + (bodyPadding + padding) + shadowOffset, fill.height + (bodyPadding + padding) + shadowOffset, context => {
+    if (shadowColor) {
+      const shadow = createCanvas(body.width, body.height, shadowContext => {
+        shadowContext.drawImage(body, 0, 0);
+        shadowContext.globalCompositeOperation = 'source-in';
+        shadowContext.fillStyle = shadowColor;
+        shadowContext.fillRect(0, 0, body.width, body.height);
+      });
+      context.drawImage(shadow, padding + shadowOffset, padding + shadowOffset);
+    }
+    context.drawImage(body, padding, padding);
+  });
+  return { canvas, padding: padding + bodyPadding };
+}
+
+/** Devuelve (y guarda en caché) la imagen de un texto con su estilo. */
+function getTextImage(text, color, scale, shadowColor, outlineColor) {
+  const cacheKey = `${text}|${color}|${scale}|${shadowColor || ''}|${outlineColor || ''}`;
+  let image = textImageCache.get(cacheKey);
+  if (!image) {
+    if (textImageCache.size >= MAX_CACHED_TEXT_IMAGES) textImageCache.clear();
+    image = createTextImage(text, color, scale, shadowColor, outlineColor);
+    textImageCache.set(cacheKey, image);
+  }
+  return image;
+}
 
 /**
  * Escribe una línea de texto. El texto se convierte a mayúsculas porque la
  * fuente solo tiene letras mayúsculas (como en las consolas de 8 bits).
  *
- * @param {CanvasRenderingContext2D} context Dónde dibujar.
+ * @param {CanvasRenderingContext2D} context Dónde dibujar (ya ampliado a alta resolución).
  * @param {string|number} text
  * @param {number} x Posición horizontal (según la alineación).
  * @param {number} y Parte superior de las letras (las tildes quedan 2 px por encima).
  * @param {string} [color] Color CSS de las letras.
  * @param {Object} [options]
  * @param {'left'|'center'|'right'} [options.align] Alineación respecto a `x`.
- * @param {number} [options.scale] Ampliación entera (2 = letras el doble de grandes).
+ * @param {number} [options.scale] Ampliación (2 = letras el doble de grandes).
  * @param {string} [options.shadowColor] Si se indica, dibuja una sombra desplazada.
  * @param {string} [options.outlineColor] Si se indica, dibuja un contorno alrededor.
  */
 function drawText(context, text, x, y, color = '#fcfcfc', { align = 'left', scale = 1, shadowColor, outlineColor } = {}) {
   const upperText = String(text).toUpperCase();
-  let left = Math.round(x);
-  if (align === 'center') left = Math.round(x - measureTextWidth(upperText, scale) / 2);
-  else if (align === 'right') left = Math.round(x - measureTextWidth(upperText, scale));
-  const top = Math.round(y);
-
-  if (shadowColor) paintTextRun(context, upperText, left + scale, top + scale, shadowColor, scale);
-  if (outlineColor) {
-    for (const [offsetX, offsetY] of OUTLINE_OFFSETS) paintTextRun(context, upperText, left + offsetX * scale, top + offsetY * scale, outlineColor, scale);
-  }
-  paintTextRun(context, upperText, left, top, color, scale);
+  if (!upperText.length) return;
+  let left = x;
+  if (align === 'center') left = x - measureTextWidth(upperText, scale) / 2;
+  else if (align === 'right') left = x - measureTextWidth(upperText, scale);
+  const { canvas, padding } = getTextImage(upperText, color, scale, shadowColor, outlineColor);
+  const snappedLeft = Math.round(left * RENDER_SCALE) / RENDER_SCALE;
+  const snappedTop = Math.round(y * RENDER_SCALE) / RENDER_SCALE;
+  context.drawImage(
+    canvas,
+    snappedLeft - padding / RENDER_SCALE,
+    snappedTop - ACCENT_ROWS * scale - padding / RENDER_SCALE,
+    canvas.width / RENDER_SCALE,
+    canvas.height / RENDER_SCALE
+  );
 }
 
 /**
@@ -2137,25 +2597,356 @@ function findSpriteDefinitionProblems(palette) {
 return { replaceRows, PACO_SMALL_POSES, PACO_BIG_POSES, PACO_COLOR_VARIANTS, pacoSpriteName, SPRITE_DEFINITIONS, findSpriteDefinitionProblems };
 })();
 
+// ─── src/graphics/pacoArt.js ───
+const __module_src_graphics_pacoArt_js = (() => {
+/**
+ * @file Dibujo vectorial de Paco en alta resolución.
+ *
+ * Paco no se dibuja con un mapa de píxeles: se pinta con formas (cápsulas
+ * para brazos y piernas, elipses para la cabeza…) siguiendo un esqueleto
+ * sencillo. Así se pueden generar muchos fotogramas de animación (ciclos de
+ * andar y correr, saltos, derrape) con un acabado limpio y moderno: contorno
+ * grueso, sombreado de dibujos animados y proporciones exageradas.
+ *
+ * Las coordenadas se dan en píxeles lógicos con la esquina inferior izquierda
+ * de la "caja" de Paco en (0, altura). Las imágenes se pintan a RENDER_SCALE
+ * veces ese tamaño y se les añade el contorno al final.
+ */
+const { RENDER_SCALE } = __module_src_config_constants_js;
+const { createCanvas } = __module_src_core_canvas_js;
+const { addOutline, applyAmbientGradient, OUTLINE_COLOR } = __module_src_graphics_hd_js;
+
+/** Margen alrededor de la caja de Paco para brazos, chanclas y contorno (píxeles lógicos). */
+const PACO_PADDING = 5;
+
+/** Colores de cada variante del chándal. */
+const PACO_PALETTES = Object.freeze({
+  normal: { jacket: '#e2301c', jacketLight: '#ff6244', jacketDark: '#9c1a10', stripe: '#ffd51c', pants: '#2a3a96', pantsDark: '#19225e', beret: '#201a2a' },
+  spicy: { jacket: '#0eae4a', jacketLight: '#4ee27c', jacketDark: '#07692c', stripe: '#e8341c', pants: '#1f6a34', pantsDark: '#124020', beret: '#201a2a' },
+  sugarRushGold: { jacket: '#ffd51c', jacketLight: '#fff07a', jacketDark: '#c88a08', stripe: '#fc7c00', pants: '#d05a08', pantsDark: '#8a3a04', beret: '#a83a08' },
+  sugarRushWhite: { jacket: '#fcfcfc', jacketLight: '#ffffff', jacketDark: '#b4bcd0', stripe: '#3cbcfc', pants: '#2a58f0', pantsDark: '#1a3a9a', beret: '#a81c10' }
+});
+
+const SKIN = { base: '#fdbb8a', light: '#ffd9b8', dark: '#e08a62' };
+const HAIR = '#6a3a1c';
+const SHOE = { base: '#b8662a', dark: '#6e3412', strap: '#ffd51c' };
+
+/** Medidas del cuerpo pequeño y grande (píxeles lógicos). */
+const BODY = Object.freeze({
+  small: { height: 16, headY: 4.5, headWidth: 7.4, headHeight: 6.5, shoulderY: 8.2, hipY: 11.3, torsoWidth: 5.8, thigh: 2.4, shin: 2.4, limbWidth: 2.0, armLength: 3.6 },
+  big: { height: 32, headY: 7.2, headWidth: 9.6, headHeight: 8.4, shoulderY: 14.6, hipY: 23.4, torsoWidth: 8, thigh: 4.4, shin: 4.4, limbWidth: 2.9, armLength: 7.4 }
+});
+
+/** Dibuja un rectángulo con las esquinas redondeadas. */
+function roundedRectPath(context, x, y, width, height, radius) {
+  const r = Math.min(radius, width / 2, height / 2);
+  context.beginPath();
+  context.moveTo(x + r, y);
+  context.arcTo(x + width, y, x + width, y + height, r);
+  context.arcTo(x + width, y + height, x, y + height, r);
+  context.arcTo(x, y + height, x, y, r);
+  context.arcTo(x, y, x + width, y, r);
+  context.closePath();
+}
+
+/** Cápsula (tubo con extremos redondos) con sombra en la parte inferior. */
+function drawTube(context, x1, y1, x2, y2, width, color, darkColor) {
+  context.lineCap = 'round';
+  context.lineJoin = 'round';
+  context.strokeStyle = darkColor;
+  context.lineWidth = width;
+  context.beginPath(); context.moveTo(x1, y1); context.lineTo(x2, y2); context.stroke();
+  context.strokeStyle = color;
+  context.lineWidth = width * 0.72;
+  context.beginPath(); context.moveTo(x1 - 0.12, y1 - 0.16); context.lineTo(x2 - 0.12, y2 - 0.16); context.stroke();
+}
+
+/** Calcula la rodilla de una pierna de dos segmentos que llega hasta el pie (cinemática inversa). */
+function solveKnee(hipX, hipY, footX, footY, thigh, shin, bendDirection) {
+  let dx = footX - hipX;
+  let dy = footY - hipY;
+  let distance = Math.hypot(dx, dy);
+  const maxReach = thigh + shin - 0.02;
+  if (distance > maxReach) {
+    footX = hipX + dx * maxReach / distance;
+    footY = hipY + dy * maxReach / distance;
+    dx = footX - hipX; dy = footY - hipY; distance = maxReach;
+  }
+  const along = (thigh * thigh - shin * shin + distance * distance) / (2 * distance);
+  const lift = Math.sqrt(Math.max(0, thigh * thigh - along * along));
+  const ux = dx / distance;
+  const uy = dy / distance;
+  return { kneeX: hipX + ux * along + -uy * lift * bendDirection, kneeY: hipY + uy * along + ux * lift * bendDirection, footX, footY };
+}
+
+/** Pierna completa: muslo, pantorrilla y chancla. */
+function drawLeg(context, body, palette, hipX, footTarget, tilt, isBack) {
+  const hipY = body.hipY;
+  const { kneeX, kneeY, footX, footY } = solveKnee(hipX, hipY, footTarget.x, footTarget.y, body.thigh, body.shin, 1);
+  const pants = isBack ? palette.pantsDark : palette.pants;
+  const dark = isBack ? '#0e1236' : palette.pantsDark;
+  drawTube(context, hipX, hipY, kneeX, kneeY, body.limbWidth, pants, dark);
+  drawTube(context, kneeX, kneeY, footX, footY - 0.5, body.limbWidth * 0.92, pants, dark);
+  // Chancla.
+  context.save();
+  context.translate(footX + 0.9, footY - 0.35);
+  context.rotate(tilt);
+  context.fillStyle = isBack ? '#7a4018' : SHOE.base;
+  context.beginPath(); context.ellipse(0, 0, body.limbWidth * 0.95 + 0.6, 1.05, 0, 0, Math.PI * 2); context.fill();
+  context.fillStyle = SHOE.dark;
+  context.beginPath(); context.ellipse(0, 0.55, body.limbWidth * 0.95 + 0.6, 0.55, 0, 0, Math.PI); context.fill();
+  context.fillStyle = SHOE.strap;
+  context.fillRect(-0.4, -1.0, 1.0, 0.8);
+  context.restore();
+}
+
+/** Brazo con manga del chándal y mano. */
+function drawArm(context, body, palette, shoulderX, shoulderY, angle, bend, isBack) {
+  const upper = body.armLength * 0.52;
+  const lower = body.armLength * 0.52;
+  const elbowX = shoulderX + Math.sin(angle) * upper;
+  const elbowY = shoulderY + Math.cos(angle) * upper;
+  const handAngle = angle + bend;
+  const handX = elbowX + Math.sin(handAngle) * lower;
+  const handY = elbowY + Math.cos(handAngle) * lower;
+  const sleeve = isBack ? palette.jacketDark : palette.jacket;
+  const sleeveDark = isBack ? '#5e0e08' : palette.jacketDark;
+  drawTube(context, shoulderX, shoulderY, elbowX, elbowY, body.limbWidth * 0.95, sleeve, sleeveDark);
+  drawTube(context, elbowX, elbowY, handX, handY, body.limbWidth * 0.85, sleeve, sleeveDark);
+  context.fillStyle = isBack ? SKIN.dark : SKIN.base;
+  context.beginPath(); context.arc(handX, handY + 0.2, body.limbWidth * 0.5, 0, Math.PI * 2); context.fill();
+}
+
+/** Torso del chándal con la franja amarilla central. */
+function drawTorso(context, body, palette, centerX, lean) {
+  const top = body.shoulderY - 1.0;
+  const bottom = body.hipY + 0.6;
+  context.save();
+  context.translate(centerX, bottom);
+  context.rotate(lean);
+  context.translate(-centerX, -bottom);
+  const gradient = context.createLinearGradient(centerX - body.torsoWidth / 2, 0, centerX + body.torsoWidth / 2, 0);
+  gradient.addColorStop(0, palette.jacketLight);
+  gradient.addColorStop(0.35, palette.jacket);
+  gradient.addColorStop(1, palette.jacketDark);
+  context.fillStyle = gradient;
+  roundedRectPath(context, centerX - body.torsoWidth / 2, top, body.torsoWidth, bottom - top, 1.9);
+  context.fill();
+  // Franja amarilla y cremallera.
+  context.fillStyle = palette.stripe;
+  context.fillRect(centerX - 0.9, top + 0.2, 1.8, bottom - top - 0.2);
+  context.fillStyle = 'rgba(20, 12, 32, 0.45)';
+  context.fillRect(centerX - 0.12, top + 0.2, 0.24, bottom - top - 0.2);
+  // Cuello alto del chándal.
+  context.fillStyle = palette.jacketDark;
+  roundedRectPath(context, centerX - 2.1, top - 0.5, 4.2, 1.5, 0.7);
+  context.fill();
+  // Cinturilla del pantalón.
+  context.fillStyle = palette.pantsDark;
+  context.fillRect(centerX - body.torsoWidth / 2 + 0.4, bottom - 0.9, body.torsoWidth - 0.8, 1.1);
+  context.restore();
+}
+
+/** Cabeza: cara, boina negra, gafas de sol y bigote. Se diseña en unidades de la cabeza grande y se escala. */
+function drawHead(context, body, palette, centerX, centerY, mood, tilt) {
+  const width = 9.6;
+  const height = 8.4;
+  context.save();
+  context.translate(centerX, centerY);
+  context.scale(body.headWidth / width, body.headWidth / width);
+  context.rotate(tilt);
+  // Oreja y patilla.
+  context.fillStyle = SKIN.dark;
+  context.beginPath(); context.ellipse(-width * 0.4, 0.8, 1.1, 1.5, 0, 0, Math.PI * 2); context.fill();
+  context.fillStyle = HAIR;
+  roundedRectPath(context, -width * 0.5, -1.6, 1.7, 3.8, 0.8); context.fill();
+  // Cara con degradado.
+  const face = context.createRadialGradient(-width * 0.12, -height * 0.18, 0.5, 0, 0, width * 0.7);
+  face.addColorStop(0, SKIN.light);
+  face.addColorStop(0.55, SKIN.base);
+  face.addColorStop(1, SKIN.dark);
+  context.fillStyle = face;
+  context.beginPath(); context.ellipse(0, 0.5, width / 2, height / 2 - 0.2, 0, 0, Math.PI * 2); context.fill();
+  // Nariz.
+  context.fillStyle = SKIN.dark;
+  context.beginPath(); context.ellipse(width * 0.47, 1.2, 1.1, 0.95, 0, 0, Math.PI * 2); context.fill();
+  context.fillStyle = SKIN.base;
+  context.beginPath(); context.ellipse(width * 0.45, 1.0, 0.9, 0.75, 0, 0, Math.PI * 2); context.fill();
+  // Gafas de sol.
+  context.fillStyle = '#0b0912';
+  roundedRectPath(context, -width * 0.18, -1.7, width * 0.74, 2.9, 1.2); context.fill();
+  context.fillRect(-width * 0.5, -1.1, width * 0.34, 0.8);
+  context.fillStyle = 'rgba(255,255,255,0.92)';
+  context.beginPath(); context.ellipse(-width * 0.01, -0.95, 0.8, 0.32, -0.5, 0, Math.PI * 2); context.fill();
+  context.beginPath(); context.ellipse(width * 0.39, -0.95, 0.7, 0.3, -0.5, 0, Math.PI * 2); context.fill();
+  // Bigote y boca.
+  context.fillStyle = '#4a2410';
+  roundedRectPath(context, width * 0.08, 2.1, width * 0.38, 1.0, 0.5); context.fill();
+  if (mood === 'open') {
+    context.fillStyle = '#7a1818';
+    context.beginPath(); context.ellipse(width * 0.27, 3.7, 1.15, 0.9, 0, 0, Math.PI * 2); context.fill();
+    context.fillStyle = '#ff8a8a';
+    context.beginPath(); context.ellipse(width * 0.27, 4.0, 0.7, 0.35, 0, 0, Math.PI * 2); context.fill();
+  } else {
+    context.fillStyle = '#8a3a2a';
+    roundedRectPath(context, width * 0.1, 3.5, width * 0.3, 0.6, 0.3); context.fill();
+  }
+  // Boina ladeada con rabito.
+  context.fillStyle = palette.beret;
+  context.beginPath();
+  context.ellipse(-width * 0.08, -height * 0.38, width * 0.58, height * 0.2, -0.2, 0, Math.PI * 2);
+  context.fill();
+  context.fillStyle = 'rgba(255,255,255,0.22)';
+  context.beginPath(); context.ellipse(-width * 0.2, -height * 0.45, width * 0.28, height * 0.06, -0.22, 0, Math.PI * 2); context.fill();
+  context.fillStyle = palette.beret;
+  roundedRectPath(context, -width * 0.1, -height * 0.64, 1.3, 1.1, 0.5); context.fill();
+  context.restore();
+}
+
+/**
+ * Parámetros del esqueleto para cada postura.
+ * `phase` (0 a 1) recorre el ciclo de andar o correr.
+ * @returns {Object}
+ */
+function describePose(pose, body) {
+  const walkMatch = /^(walk|run)(\d)$/.exec(pose);
+  const base = { bob: 0, lean: 0, headTilt: 0, mood: 'smile', backArm: [0.2, 0.1], frontArm: [-0.2, 0.1], backFoot: null, frontFoot: null, squashX: 1, squashY: 1 };
+  const groundY = body.height - 0.2;
+  const hipX = 8;
+  if (walkMatch) {
+    const isRun = walkMatch[1] === 'run';
+    const phase = (Number(walkMatch[2]) - 1) / 8;
+    const angle = phase * Math.PI * 2;
+    const stride = isRun ? body.thigh * 1.15 : body.thigh * 0.9;
+    const lift = isRun ? body.shin * 0.9 : body.shin * 0.5;
+    const footAt = offsetAngle => {
+      const a = angle + offsetAngle;
+      return { x: hipX - 0.2 + Math.cos(a) * stride, y: groundY - Math.max(0, Math.sin(a)) * lift };
+    };
+    return {
+      ...base,
+      bob: -Math.abs(Math.sin(angle)) * (isRun ? 0.9 : 0.55),
+      lean: isRun ? 0.2 : 0.07,
+      headTilt: isRun ? 0.08 : 0.02,
+      mood: isRun ? 'open' : 'smile',
+      backFoot: footAt(Math.PI),
+      frontFoot: footAt(0),
+      backArm: [-Math.cos(angle) * (isRun ? 1.1 : 0.7) , isRun ? 1.2 : 0.6],
+      frontArm: [Math.cos(angle) * (isRun ? 1.1 : 0.7), isRun ? 1.3 : 0.5]
+    };
+  }
+  switch (pose) {
+    case 'stand2':
+      return { ...base, bob: 0.25, squashY: 0.985, backFoot: { x: hipX - 1.3, y: groundY }, frontFoot: { x: hipX + 1.5, y: groundY } };
+    case 'jump':
+    case 'jumpUp':
+      return { ...base, bob: -0.2, lean: 0.06, mood: 'open', squashY: 1.06, squashX: 0.95,
+        backFoot: { x: hipX - 2.0, y: groundY - body.shin * 0.7 }, frontFoot: { x: hipX + 2.0, y: groundY - body.shin * 1.1 },
+        backArm: [-2.3, 0.3], frontArm: [2.0, -0.4] };
+    case 'jumpDown':
+      return { ...base, bob: 0, lean: -0.04, mood: 'open', squashY: 1.03, squashX: 0.98,
+        backFoot: { x: hipX - 1.8, y: groundY - body.shin * 0.5 }, frontFoot: { x: hipX + 1.9, y: groundY - body.shin * 0.3 },
+        backArm: [-2.0, 0.2], frontArm: [1.9, 0.0] };
+    case 'skid':
+      return { ...base, bob: 0.4, lean: -0.28, headTilt: -0.1, mood: 'open', squashY: 0.96, squashX: 1.04,
+        backFoot: { x: hipX - 2.6, y: groundY }, frontFoot: { x: hipX + 2.4, y: groundY - 0.3 },
+        backArm: [1.8, 0.3], frontArm: [-1.6, 0.2] };
+    case 'crouch':
+      return { ...base, bob: body.height > 20 ? 5.2 : 2.2, lean: 0.1, squashY: 0.96, squashX: 1.04,
+        backFoot: { x: hipX - 2.2, y: groundY }, frontFoot: { x: hipX + 2.4, y: groundY } };
+    case 'dead':
+      return { ...base, bob: -0.6, mood: 'open', headTilt: 0.15,
+        backFoot: { x: hipX - 2.2, y: groundY - body.shin * 0.4 }, frontFoot: { x: hipX + 2.4, y: groundY - body.shin * 0.8 },
+        backArm: [-2.7, 0.2], frontArm: [2.6, -0.2] };
+    case 'pole':
+      return { ...base, bob: 0, backArm: [2.9, 0.1], frontArm: [2.9, 0.1],
+        backFoot: { x: hipX - 0.8, y: groundY - body.shin * 0.5 }, frontFoot: { x: hipX + 0.8, y: groundY - body.shin * 0.2 } };
+    default:
+      return { ...base, backFoot: { x: hipX - 1.3, y: groundY }, frontFoot: { x: hipX + 1.5, y: groundY } };
+  }
+}
+
+/** Lista de todas las posturas que se generan para cada tamaño y variante. */
+const PACO_POSES = Object.freeze([
+  'stand', 'stand2', 'jump', 'jumpUp', 'jumpDown', 'skid', 'crouch', 'dead', 'pole',
+  ...[1, 2, 3, 4, 5, 6, 7, 8].map(n => `walk${n}`),
+  ...[1, 2, 3, 4, 5, 6, 7, 8].map(n => `run${n}`)
+]);
+
+/**
+ * Pinta un fotograma de Paco.
+ * @param {'small'|'big'} size
+ * @param {string} pose Una de {@link PACO_POSES}.
+ * @param {string} variant Clave de {@link PACO_PALETTES}.
+ * @returns {{image: HTMLCanvasElement, padding: number, width: number, height: number}}
+ */
+function createPacoSprite(size, pose, variant) {
+  const body = BODY[size];
+  const palette = PACO_PALETTES[variant] || PACO_PALETTES.normal;
+  const description = describePose(pose, body);
+  const logicalWidth = 16 + PACO_PADDING * 2;
+  const logicalHeight = body.height + PACO_PADDING * 2;
+  const rawCanvas = createCanvas(logicalWidth * RENDER_SCALE, logicalHeight * RENDER_SCALE, context => {
+    context.scale(RENDER_SCALE, RENDER_SCALE);
+    context.translate(PACO_PADDING, PACO_PADDING);
+    // Aplastar o estirar desde los pies.
+    context.translate(8, body.height);
+    context.scale(description.squashX, description.squashY);
+    context.translate(-8, -body.height);
+    context.translate(0, description.bob);
+
+    const centerX = 8;
+    const shoulderX = centerX;
+    const hipX = centerX;
+    const shoulder = body.shoulderY;
+    const lean = description.lean;
+
+    // Capa trasera: brazo y pierna de atrás.
+    drawArm(context, body, palette, shoulderX - 0.6, shoulder, description.backArm[0], description.backArm[1], true);
+    drawLeg(context, { ...body, hipY: body.hipY - description.bob * 0 }, palette, hipX - 0.9, { x: description.backFoot.x, y: description.backFoot.y - description.bob }, 0.05, true);
+    drawTorso(context, body, palette, centerX, lean);
+    drawLeg(context, body, palette, hipX + 0.9, { x: description.frontFoot.x, y: description.frontFoot.y - description.bob }, -0.05, false);
+    drawHead(context, body, palette, centerX + lean * 4 + 0.4, body.headY, description.mood, description.headTilt);
+    drawArm(context, body, palette, shoulderX + 0.6, shoulder, description.frontArm[0], description.frontArm[1], false);
+  });
+  applyAmbientGradient(rawCanvas, 0, rawCanvas.height);
+  // Contorno interior fino de cada pieza ya está sugerido por las sombras; el exterior es grueso.
+  const outlined = addOutline(rawCanvas, RENDER_SCALE, OUTLINE_COLOR);
+  return {
+    image: outlined,
+    padding: PACO_PADDING + 1,
+    width: 16,
+    height: body.height
+  };
+}
+return { PACO_PADDING, PACO_PALETTES, PACO_POSES, createPacoSprite };
+})();
+
 // ─── src/graphics/sprites.js ───
 const __module_src_graphics_sprites_js = (() => {
 /**
  * @file Conversión de los mapas de píxeles en imágenes y dibujo de sprites.
  *
- * Al arrancar, cada definición de `spriteData.js` se pinta una sola vez en un
- * canvas pequeño (y también su versión reflejada). Después, dibujar un sprite
- * es copiar esa imagen, que es muy rápido.
+ * Al arrancar, cada definición de `spriteData.js` se pinta una vez en un
+ * canvas pequeño y se convierte en una imagen de alta resolución (ampliación
+ * suavizada, luz y sombra, contorno grueso). Después, dibujar un sprite es
+ * copiar esa imagen, que es muy rápido. También se guarda su versión reflejada.
  */
+const { RENDER_SCALE } = __module_src_config_constants_js;
 const { createCanvas } = __module_src_core_canvas_js;
 const { PIXEL_COLORS, TRANSPARENT_PIXEL } = __module_src_graphics_palette_js;
 const { SPRITE_DEFINITIONS, findSpriteDefinitionProblems } = __module_src_graphics_spriteData_js;
+const { createHdSprite } = __module_src_graphics_hd_js;
+const { PACO_POSES, PACO_PALETTES, createPacoSprite } = __module_src_graphics_pacoArt_js;
+const { pacoSpriteName } = __module_src_graphics_spriteData_js;
 
 /**
  * @typedef {Object} Sprite
- * @property {HTMLCanvasElement} image Imagen en su orientación original.
+ * @property {HTMLCanvasElement} image Imagen en alta resolución (con margen para el contorno).
  * @property {HTMLCanvasElement} mirroredImage Imagen reflejada horizontalmente.
- * @property {number} width
- * @property {number} height
+ * @property {number} width Ancho lógico (sin el margen).
+ * @property {number} height Alto lógico (sin el margen).
+ * @property {number} padding Margen del contorno, en píxeles lógicos.
  */
 
 /**
@@ -2219,37 +3010,74 @@ function buildSprites() {
   for (const [name, definition] of Object.entries(SPRITE_DEFINITIONS)) {
     const rows = padRowsAtTop(definition.rows, definition.height);
     const colors = { ...PIXEL_COLORS, ...(definition.colors || {}) };
-    const image = paintPixelRows(rows, colors);
-    SPRITES[name] = { image, mirroredImage: createMirroredImage(image), width: image.width, height: image.height };
+    const { image, padding } = createHdSprite(paintPixelRows(rows, colors));
+    SPRITES[name] = {
+      image,
+      mirroredImage: createMirroredImage(image),
+      width: rows[0].length,
+      height: rows.length,
+      padding
+    };
+  }
+  buildPacoSprites();
+}
+
+/** Sustituye los sprites pixelados de Paco por su dibujo vectorial animado. */
+function buildPacoSprites() {
+  for (const variant of Object.keys(PACO_PALETTES)) {
+    for (const size of ['small', 'big']) {
+      for (const pose of PACO_POSES) {
+        const { image, padding, width, height } = createPacoSprite(size, pose, variant);
+        SPRITES[pacoSpriteName(size, pose, variant)] = { image, mirroredImage: createMirroredImage(image), width, height, padding };
+      }
+    }
   }
 }
 
 /**
  * Dibuja un sprite.
- * @param {CanvasRenderingContext2D} context Dónde dibujar.
+ * @param {CanvasRenderingContext2D} context Dónde dibujar (ya ampliado a alta resolución).
  * @param {Sprite} sprite
- * @param {number} x Posición en pantalla (esquina superior izquierda).
+ * @param {number} x Posición lógica (esquina superior izquierda del dibujo, sin contorno).
  * @param {number} y
  * @param {Object} [options]
  * @param {boolean} [options.mirrored] Dibujar reflejado horizontalmente.
  * @param {boolean} [options.upsideDown] Dibujar boca abajo (enemigo derrotado).
  * @param {number} [options.rotation] Rotación en radianes alrededor del centro.
+ * @param {number} [options.scaleX] Estiramiento horizontal desde el centro de los pies (1 = normal).
+ * @param {number} [options.scaleY] Estiramiento vertical desde los pies (1 = normal).
+ * @param {number} [options.alpha] Opacidad (1 = opaco).
  */
-function drawSprite(context, sprite, x, y, { mirrored = false, upsideDown = false, rotation = 0 } = {}) {
+function drawSprite(context, sprite, x, y, { mirrored = false, upsideDown = false, rotation = 0, scaleX = 1, scaleY = 1, alpha = 1 } = {}) {
   if (!sprite) return;
   const image = mirrored ? sprite.mirroredImage : sprite.image;
-  const roundedX = Math.round(x);
-  const roundedY = Math.round(y);
-  if (!rotation && !upsideDown) {
-    context.drawImage(image, roundedX, roundedY);
-    return;
+  const drawWidth = image.width / RENDER_SCALE;
+  const drawHeight = image.height / RENDER_SCALE;
+  const snappedX = Math.round(x * RENDER_SCALE) / RENDER_SCALE;
+  const snappedY = Math.round(y * RENDER_SCALE) / RENDER_SCALE;
+  const previousAlpha = context.globalAlpha;
+  if (alpha !== 1) context.globalAlpha = previousAlpha * alpha;
+
+  const isTransformed = rotation || upsideDown || scaleX !== 1 || scaleY !== 1;
+  if (!isTransformed) {
+    context.drawImage(image, snappedX - sprite.padding, snappedY - sprite.padding, drawWidth, drawHeight);
+  } else if (rotation || upsideDown) {
+    context.save();
+    context.translate(snappedX + sprite.width / 2, snappedY + sprite.height / 2);
+    if (rotation) context.rotate(rotation);
+    if (upsideDown) context.scale(1, -1);
+    context.scale(scaleX, scaleY);
+    context.drawImage(image, -sprite.width / 2 - sprite.padding, -sprite.height / 2 - sprite.padding, drawWidth, drawHeight);
+    context.restore();
+  } else {
+    // Estirar y aplastar: el punto fijo son los pies (centro de la base).
+    context.save();
+    context.translate(snappedX + sprite.width / 2, snappedY + sprite.height);
+    context.scale(scaleX, scaleY);
+    context.drawImage(image, -sprite.width / 2 - sprite.padding, -sprite.height - sprite.padding, drawWidth, drawHeight);
+    context.restore();
   }
-  context.save();
-  context.translate(roundedX + sprite.width / 2, roundedY + sprite.height / 2);
-  if (rotation) context.rotate(rotation);
-  if (upsideDown) context.scale(1, -1);
-  context.drawImage(image, -sprite.width / 2, -sprite.height / 2);
-  context.restore();
+  if (alpha !== 1) context.globalAlpha = previousAlpha;
 }
 
 /**
@@ -2258,14 +3086,37 @@ function drawSprite(context, sprite, x, y, { mirrored = false, upsideDown = fals
  * @param {Sprite} sprite
  * @param {number} x
  * @param {number} y
- * @param {number} scale Factor de ampliación entero.
+ * @param {number} scale Factor de ampliación.
  * @param {boolean} [mirrored]
  */
 function drawScaledSprite(context, sprite, x, y, scale, mirrored = false) {
   const image = mirrored ? sprite.mirroredImage : sprite.image;
-  context.drawImage(image, Math.round(x), Math.round(y), sprite.width * scale, sprite.height * scale);
+  context.drawImage(
+    image,
+    x - sprite.padding * scale, y - sprite.padding * scale,
+    image.width / RENDER_SCALE * scale, image.height / RENDER_SCALE * scale
+  );
 }
-return { SPRITES, buildSprites, drawSprite, drawScaledSprite };
+
+/**
+ * Dibuja un sprite encajado en un rectángulo (iconos del marcador).
+ * @param {CanvasRenderingContext2D} context
+ * @param {Sprite} sprite
+ * @param {number} x
+ * @param {number} y
+ * @param {number} width Ancho del dibujo (sin contorno).
+ * @param {number} height Alto del dibujo (sin contorno).
+ */
+function drawSpriteFitted(context, sprite, x, y, width, height) {
+  const scaleX = width / sprite.width;
+  const scaleY = height / sprite.height;
+  context.drawImage(
+    sprite.image,
+    x - sprite.padding * scaleX, y - sprite.padding * scaleY,
+    sprite.image.width / RENDER_SCALE * scaleX, sprite.image.height / RENDER_SCALE * scaleY
+  );
+}
+return { SPRITES, buildSprites, drawSprite, drawScaledSprite, drawSpriteFitted };
 })();
 
 // ─── src/core/storage.js ───
@@ -3807,6 +4658,7 @@ const __module_src_graphics_tileImages_js = (() => {
 const { TILE_SIZE } = __module_src_config_constants_js;
 const { createCanvas, fillRectangle, fillTriangle } = __module_src_core_canvas_js;
 const { createSeededRandom } = __module_src_core_math_js;
+const { scale3x } = __module_src_graphics_hd_js;
 
 /** Número de fotogramas de las animaciones de bloques, lava y agua. */
 const TILE_ANIMATION_FRAMES = 4;
@@ -4121,371 +4973,1052 @@ function createBridgeTile() {
  */
 
 /**
- * Genera todas las imágenes de baldosas de un tema.
+ * Convierte una baldosa pixelada en su versión de alta resolución:
+ * ampliación suavizada y, para los bloques, un biselado de luz y sombra.
+ * @param {HTMLCanvasElement} tile
+ * @param {{bevel?: boolean, depthShade?: number}} [options]
+ * @returns {HTMLCanvasElement} Imagen de 3× el tamaño.
+ */
+function toHdTile(tile, { bevel = false, depthShade = 0 } = {}) {
+  const big = scale3x(tile);
+  const context = big.getContext('2d');
+  context.globalCompositeOperation = 'source-atop';
+  if (depthShade) {
+    const gradient = context.createLinearGradient(0, 0, 0, big.height);
+    gradient.addColorStop(0, 'rgba(0, 0, 0, 0)');
+    gradient.addColorStop(1, `rgba(12, 6, 36, ${depthShade})`);
+    context.fillStyle = gradient;
+    context.fillRect(0, 0, big.width, big.height);
+  }
+  if (bevel) {
+    context.fillStyle = 'rgba(255, 255, 255, 0.3)';
+    context.fillRect(0, 0, big.width, 2);
+    context.fillRect(0, 0, 2, big.height);
+    context.fillStyle = 'rgba(10, 4, 30, 0.38)';
+    context.fillRect(0, big.height - 2, big.width, 2);
+    context.fillRect(big.width - 2, 0, 2, big.height);
+  }
+  context.globalCompositeOperation = 'source-over';
+  return big;
+}
+
+/** Aplica {@link toHdTile} a las baldosas de un líquido animado. */
+function hdLiquidFrames(frames) {
+  return frames.map(frame => ({ surface: toHdTile(frame.surface), depth: toHdTile(frame.depth) }));
+}
+
+/**
+ * Genera todas las imágenes de baldosas de un tema, en alta resolución.
  * @param {import('../world/themes.js').Theme} theme
  * @returns {TileImages}
  */
 function createTileImages(theme) {
+  const barrel = createBarrelTiles();
   return {
-    groundSurface: createGroundTile(theme.ground, true),
-    groundFill: createGroundTile(theme.ground, false),
-    brick: createBrickTile(theme.brickColors),
-    questionBlockFrames: [0, 1, 2, 3].map(createQuestionBlockTile),
-    usedBlock: createUsedBlockTile(),
-    azulejo: createAzulejoTile(),
-    barrel: createBarrelTiles(),
-    oneWayPlatform: createOneWayPlatformTile(theme.oneWayPlatform),
-    lavaFrames: createLiquidFrames({ surfaceColor: '#e83c00', deepColor: '#c02000', waveColor: '#fc9c00', sparkleColor: '#fc7c00', waveBaseline: 4 }),
-    waterFrames: createLiquidFrames({ surfaceColor: '#1c64c8', deepColor: '#1450a8', waveColor: '#5ca8fc', sparkleColor: '#a8d8fc', waveBaseline: 4 }),
-    bridge: createBridgeTile()
+    groundSurface: toHdTile(createGroundTile(theme.ground, true)),
+    groundFill: toHdTile(createGroundTile(theme.ground, false), { depthShade: 0.16 }),
+    brick: toHdTile(createBrickTile(theme.brickColors), { bevel: true }),
+    questionBlockFrames: [0, 1, 2, 3].map(frame => toHdTile(createQuestionBlockTile(frame), { bevel: true })),
+    usedBlock: toHdTile(createUsedBlockTile(), { bevel: true }),
+    azulejo: toHdTile(createAzulejoTile()),
+    barrel: {
+      topLeft: toHdTile(barrel.topLeft), topRight: toHdTile(barrel.topRight),
+      bodyLeft: toHdTile(barrel.bodyLeft), bodyRight: toHdTile(barrel.bodyRight)
+    },
+    oneWayPlatform: toHdTile(createOneWayPlatformTile(theme.oneWayPlatform), { bevel: true }),
+    lavaFrames: hdLiquidFrames(createLiquidFrames({ surfaceColor: '#e83c00', deepColor: '#c02000', waveColor: '#fc9c00', sparkleColor: '#fc7c00', waveBaseline: 4 })),
+    waterFrames: hdLiquidFrames(createLiquidFrames({ surfaceColor: '#1c64c8', deepColor: '#1450a8', waveColor: '#5ca8fc', sparkleColor: '#a8d8fc', waveBaseline: 4 })),
+    bridge: toHdTile(createBridgeTile(), { bevel: true })
   };
 }
 return { TILE_ANIMATION_FRAMES, createTileImages };
 })();
 
-// ─── src/graphics/backgroundImages.js ───
-const __module_src_graphics_backgroundImages_js = (() => {
+// ─── src/graphics/backgroundConstants.js ───
+const __module_src_graphics_backgroundConstants_js = (() => {
 /**
- * @file Fondos con efecto parallax para cada ciudad.
- *
- * Cada fondo tiene tres partes:
- *   - `sky`: una columna de 1 píxel con las franjas de color del cielo (se estira).
- *   - `farLayer`: siluetas lejanas que se desplazan despacio (20 % de la cámara).
- *   - `nearLayer`: edificios o árboles cercanos que se desplazan más (50 %).
- * Las capas miden 512 píxeles de ancho y se repiten en horizontal.
- *
- * Todo se dibuja con formas sencillas y un generador aleatorio con semilla, así
- * cada ciudad tiene siempre el mismo aspecto.
+ * @file Medidas compartidas de los fondos (sin dependencias, para no crear
+ * ciclos entre el generador de fondos y sus herramientas).
  */
-const { SCREEN_HEIGHT, GROUND_SURFACE_Y } = __module_src_config_constants_js;
-const { createCanvas, fillRectangle, fillCircle, fillTriangle } = __module_src_core_canvas_js;
-const { createSeededRandom, randomItem } = __module_src_core_math_js;
-const { drawText, measureTextWidth } = __module_src_graphics_font_js;
 
 /** Ancho de las capas del fondo; se repiten para cubrir el nivel entero. */
 const BACKGROUND_LAYER_WIDTH = 512;
-/** Fracción del movimiento de la cámara que recorre cada capa. */
-const PARALLAX_FACTORS = Object.freeze({ farLayer: 0.2, nearLayer: 0.5 });
+
+/** Fracción del movimiento de la cámara que recorre cada capa (más lejos = más lento). */
+const PARALLAX_FACTORS = Object.freeze({ farLayer: 0.1, midLayer: 0.28, nearLayer: 0.55 });
+return { BACKGROUND_LAYER_WIDTH, PARALLAX_FACTORS };
+})();
+
+// ─── src/graphics/backgroundKit.js ───
+const __module_src_graphics_backgroundKit_js = (() => {
+/**
+ * @file Herramientas de dibujo para los fondos en alta resolución: mezcla de
+ * colores, degradados, colinas que encajan al repetirse, edificios con luz y
+ * sombra, resplandores y neblina.
+ *
+ * Todas las funciones reciben un contexto que ya está ampliado a RENDER_SCALE,
+ * así que se dibuja en píxeles lógicos (con decimales) y sale suave.
+ */
+const { BACKGROUND_LAYER_WIDTH } = __module_src_graphics_backgroundConstants_js;
+
+const TAU = Math.PI * 2;
+
+/** Convierte "#rrggbb", "#rgb" o "rgb(r,g,b)" en [r, g, b]. */
+function parseHex(color) {
+  const rgbMatch = /^rgba?\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)/.exec(color);
+  if (rgbMatch) return [Number(rgbMatch[1]), Number(rgbMatch[2]), Number(rgbMatch[3])];
+  let hex = color.replace('#', '');
+  if (hex.length === 3) hex = hex.split('').map(character => character + character).join('');
+  return [0, 2, 4].map(offset => parseInt(hex.slice(offset, offset + 2), 16));
+}
+
+/** Mezcla dos colores `#rrggbb` (t = 0 da `first`, t = 1 da `second`). */
+function mix(first, second, t) {
+  const a = parseHex(first);
+  const b = parseHex(second);
+  return `rgb(${a.map((value, index) => Math.round(value + (b[index] - value) * t)).join(',')})`;
+}
+
+/** Aclara (amount > 0) u oscurece (amount < 0) un color `#rrggbb`. */
+function shade(color, amount) {
+  return amount >= 0 ? mix(color, '#ffffff', amount) : mix(color, '#000000', -amount);
+}
+
+/** Color `#rrggbb` con transparencia. */
+function alpha(color, opacity) {
+  const [r, g, b] = parseHex(color);
+  return `rgba(${r},${g},${b},${opacity})`;
+}
+
+/** Degradado lineal con paradas [[posición, color], …]. */
+function linearGradient(context, x0, y0, x1, y1, stops) {
+  const gradient = context.createLinearGradient(x0, y0, x1, y1);
+  for (const [position, color] of stops) gradient.addColorStop(position, color);
+  return gradient;
+}
 
 /**
- * Dibuja una cuadrícula de ventanas dentro de un edificio.
- * @param {CanvasRenderingContext2D} context
- * @param {Object} building Rectángulo del edificio y medidas de las ventanas.
- * @param {() => number} [randomSource] Si se indica, algunas ventanas quedan apagadas.
+ * Dibuja `draw(x)` en `x` y, si el objeto cruza el borde de la capa, también
+ * desplazado un ancho de capa, para que la capa repetida no tenga costuras.
  */
-function paintWindows(context, { left, top, width, height, color, spacingX = 6, spacingY = 8, windowWidth = 3, windowHeight = 4 }, randomSource) {
-  for (let y = top + 4; y < top + height - windowHeight - 2; y += spacingY) {
-    for (let x = left + 3; x < left + width - windowWidth - 1; x += spacingX) {
-      const isLit = !randomSource || randomSource() > 0.18;
-      if (isLit) fillRectangle(context, x, y, windowWidth, windowHeight, color);
+function wrapDraw(context, x, width, draw) {
+  for (const offset of [-BACKGROUND_LAYER_WIDTH, 0, BACKGROUND_LAYER_WIDTH]) {
+    if (x + offset + width > -4 && x + offset < BACKGROUND_LAYER_WIDTH + 4) draw(x + offset);
+  }
+}
+
+/** Camino con las esquinas redondeadas. */
+function roundedRect(context, x, y, width, height, radius) {
+  const r = Math.min(radius, width / 2, height / 2);
+  context.beginPath();
+  context.moveTo(x + r, y);
+  context.arcTo(x + width, y, x + width, y + height, r);
+  context.arcTo(x + width, y + height, x, y + height, r);
+  context.arcTo(x, y + height, x, y, r);
+  context.arcTo(x, y, x + width, y, r);
+  context.closePath();
+}
+
+/**
+ * Colina o cordillera que se repite sin costuras (suma de ondas con un número
+ * entero de periodos a lo ancho de la capa).
+ * @param {CanvasRenderingContext2D} context
+ * @param {Object} options
+ * @param {number} options.baseY Altura media de la cresta.
+ * @param {number} options.amplitude Altura de las ondulaciones.
+ * @param {number} options.periods Periodos enteros a lo ancho.
+ * @param {number} [options.phase]
+ * @param {string|CanvasGradient} options.fill
+ * @param {number} [options.bottom] Hasta dónde se rellena.
+ * @param {number} [options.sharpness] 0 = colinas suaves, 1 = picos.
+ * @param {string} [options.rim] Color de la línea de luz de la cresta.
+ */
+function ridge(context, { baseY, amplitude, periods, phase = 0, fill, bottom = 260, sharpness = 0, rim = null }) {
+  const point = x => {
+    const t = x / BACKGROUND_LAYER_WIDTH;
+    let wave = 0.55 * Math.sin(TAU * periods * t + phase) + 0.3 * Math.sin(TAU * (periods * 2 + 1) * t + phase * 1.7) + 0.15 * Math.sin(TAU * (periods * 5 + 2) * t + phase * 0.6);
+    if (sharpness) wave = wave * (1 - sharpness) + (1 - Math.abs(Math.sin(TAU * periods * t + phase))) * sharpness * 1.6 - sharpness * 0.4;
+    return baseY - amplitude * wave;
+  };
+  context.beginPath();
+  context.moveTo(0, bottom);
+  for (let x = 0; x <= BACKGROUND_LAYER_WIDTH; x += 2) context.lineTo(x, point(x));
+  context.lineTo(BACKGROUND_LAYER_WIDTH, bottom);
+  context.closePath();
+  context.fillStyle = fill;
+  context.fill();
+  if (rim) {
+    context.beginPath();
+    for (let x = 0; x <= BACKGROUND_LAYER_WIDTH; x += 2) (x ? context.lineTo(x, point(x)) : context.moveTo(x, point(x)));
+    context.strokeStyle = rim;
+    context.lineWidth = 0.9;
+    context.stroke();
+  }
+  return point;
+}
+
+/** Neblina: degradado vertical de un color que se desvanece. */
+function haze(context, topY, bottomY, color, topOpacity, bottomOpacity) {
+  context.fillStyle = linearGradient(context, 0, topY, 0, bottomY, [[0, alpha(color, topOpacity)], [1, alpha(color, bottomOpacity)]]);
+  context.fillRect(0, topY, BACKGROUND_LAYER_WIDTH, bottomY - topY);
+}
+
+/** Resplandor circular que se suma a lo que hay debajo. */
+function glow(context, x, y, radius, color, intensity = 0.6) {
+  context.save();
+  context.globalCompositeOperation = 'lighter';
+  const gradient = context.createRadialGradient(x, y, 0, x, y, radius);
+  gradient.addColorStop(0, alpha(color, intensity));
+  gradient.addColorStop(1, alpha(color, 0));
+  context.fillStyle = gradient;
+  context.fillRect(x - radius, y - radius, radius * 2, radius * 2);
+  context.restore();
+}
+
+/** Contorno suave de un camino ya construido, en un tono más oscuro del relleno. */
+function strokeSoft(context, color, width = 0.8, amount = -0.5) {
+  context.strokeStyle = shade(color, amount);
+  context.lineWidth = width;
+  context.lineJoin = 'round';
+  context.stroke();
+}
+
+/**
+ * Cuerpo de un edificio con luz de la izquierda, sombra a la derecha, cornisa y contorno.
+ * Devuelve las medidas útiles para colocar ventanas.
+ */
+function buildingBody(context, { x, y, width, height, color, outline = true, roof = 'flat', roofColor = '#8c4c30', cornice = true }) {
+  context.fillStyle = linearGradient(context, x, 0, x + width, 0, [[0, shade(color, 0.14)], [0.55, color], [1, shade(color, -0.2)]]);
+  context.fillRect(x, y, width, height);
+  // Sombra de ambiente en la base y luz arriba.
+  context.fillStyle = linearGradient(context, 0, y, 0, y + height, [[0, 'rgba(255,255,255,0.1)'], [0.35, 'rgba(255,255,255,0)'], [1, 'rgba(10,6,30,0.28)']]);
+  context.fillRect(x, y, width, height);
+  if (roof === 'tile') {
+    context.beginPath();
+    context.moveTo(x - 2, y + 1);
+    context.lineTo(x + width * 0.2, y - 10);
+    context.lineTo(x + width * 0.8, y - 10);
+    context.lineTo(x + width + 2, y + 1);
+    context.closePath();
+    context.fillStyle = linearGradient(context, 0, y - 10, 0, y + 1, [[0, shade(roofColor, 0.15)], [1, shade(roofColor, -0.25)]]);
+    context.fill();
+    if (outline) strokeSoft(context, roofColor);
+    context.strokeStyle = 'rgba(0,0,0,0.18)';
+    context.lineWidth = 0.4;
+    for (let tileX = x + 2; tileX < x + width; tileX += 3) { context.beginPath(); context.moveTo(tileX, y - 9); context.lineTo(tileX - 1.5, y); context.stroke(); }
+  } else if (cornice) {
+    context.fillStyle = shade(color, -0.3);
+    context.fillRect(x - 1, y - 2.5, width + 2, 3);
+    context.fillStyle = shade(color, 0.25);
+    context.fillRect(x - 1, y - 2.5, width + 2, 0.8);
+  }
+  if (outline) {
+    context.strokeStyle = shade(color, -0.55);
+    context.lineWidth = 0.9;
+    context.strokeRect(x, y, width, height);
+  }
+}
+
+/** Ventana con marco, cristal degradado y, si está encendida, un resplandor. */
+function windowPane(context, x, y, width, height, { glass = '#3c4c7c', frame = '#f2e6d0', lit = false, arched = false, sill = true }) {
+  context.fillStyle = frame;
+  if (arched) { context.beginPath(); context.moveTo(x - 0.6, y + height + 0.6); context.lineTo(x - 0.6, y + width / 2); context.arc(x + width / 2, y + width / 2, width / 2 + 0.6, Math.PI, 0); context.lineTo(x + width + 0.6, y + height + 0.6); context.closePath(); context.fill(); }
+  else context.fillRect(x - 0.6, y - 0.6, width + 1.2, height + 1.2);
+  context.fillStyle = linearGradient(context, 0, y, 0, y + height, [[0, shade(glass, 0.25)], [1, glass]]);
+  if (arched) { context.beginPath(); context.moveTo(x, y + height); context.lineTo(x, y + width / 2); context.arc(x + width / 2, y + width / 2, width / 2, Math.PI, 0); context.lineTo(x + width, y + height); context.closePath(); context.fill(); }
+  else context.fillRect(x, y, width, height);
+  context.fillStyle = 'rgba(255,255,255,0.28)';
+  context.fillRect(x + 0.4, y + (arched ? width / 2 : 0.4), width * 0.35, height * 0.35);
+  if (sill) { context.fillStyle = shade(frame, -0.25); context.fillRect(x - 1, y + height + 0.4, width + 2, 0.9); }
+  if (lit) glow(context, x + width / 2, y + height / 2, Math.max(width, height) * 1.4, '#ffd070', 0.4);
+}
+
+/** Nube suave formada por círculos con degradado de luz. */
+function softCloud(context, x, y, scale, { top = '#ffffff', bottom = '#c8d8f0', opacity = 1 } = {}) {
+  context.save();
+  context.globalAlpha = opacity;
+  const puffs = [[0, 0, 11], [11, -4, 14], [24, 0, 12], [35, 3, 9], [-9, 4, 8]];
+  for (const [offsetX, offsetY, radius] of puffs) {
+    const centerX = x + offsetX * scale;
+    const centerY = y + offsetY * scale;
+    const gradient = context.createLinearGradient(0, centerY - radius * scale, 0, centerY + radius * scale);
+    gradient.addColorStop(0, top);
+    gradient.addColorStop(1, bottom);
+    context.fillStyle = gradient;
+    context.beginPath();
+    context.arc(centerX, centerY, radius * scale, 0, TAU);
+    context.fill();
+  }
+  context.restore();
+}
+
+/** Árbol redondeado con tronco, copa con luz y sombra. */
+function roundTree(context, x, groundY, height, { trunk = '#6a4426', leaves = '#3f9a47', outline = true } = {}) {
+  const trunkHeight = height * 0.45;
+  context.fillStyle = trunk;
+  context.fillRect(x - 1.3, groundY - trunkHeight, 2.6, trunkHeight);
+  const crownRadius = height * 0.34;
+  const crownY = groundY - trunkHeight - crownRadius * 0.55;
+  for (const [offsetX, offsetY, factor] of [[-0.55, 0.35, 0.78], [0.6, 0.3, 0.8], [0, -0.1, 1]]) {
+    const cx = x + offsetX * crownRadius;
+    const cy = crownY + offsetY * crownRadius;
+    const r = crownRadius * factor;
+    context.beginPath();
+    context.arc(cx, cy, r, 0, TAU);
+    context.fillStyle = linearGradient(context, cx - r, cy - r, cx + r, cy + r, [[0, shade(leaves, 0.25)], [0.5, leaves], [1, shade(leaves, -0.35)]]);
+    context.fill();
+    if (outline) strokeSoft(context, leaves, 0.7, -0.55);
+  }
+}
+
+/** Palmera con tronco curvo y hojas largas. */
+function palmTree(context, x, groundY, height, lean = 6, { leaves = '#2f9a4a', trunk = '#9a6a38' } = {}) {
+  const topX = x + lean;
+  const topY = groundY - height;
+  context.strokeStyle = shade(trunk, -0.45);
+  context.lineWidth = 3.6;
+  context.lineCap = 'round';
+  context.beginPath(); context.moveTo(x, groundY); context.quadraticCurveTo(x - lean * 0.2, groundY - height * 0.55, topX, topY); context.stroke();
+  context.strokeStyle = trunk;
+  context.lineWidth = 2.6;
+  context.beginPath(); context.moveTo(x, groundY); context.quadraticCurveTo(x - lean * 0.2, groundY - height * 0.55, topX, topY); context.stroke();
+  context.strokeStyle = shade(trunk, -0.3);
+  context.lineWidth = 0.5;
+  for (let ring = 1; ring < 9; ring++) {
+    const t = ring / 9;
+    const ringX = x + (topX - x) * t * t - lean * 0.2 * 2 * t * (1 - t);
+    const ringY = groundY - height * t;
+    context.beginPath(); context.moveTo(ringX - 1.2, ringY); context.lineTo(ringX + 1.2, ringY - 0.5); context.stroke();
+  }
+  const fronds = 8;
+  for (let frond = 0; frond < fronds; frond++) {
+    const angle = -Math.PI + (frond + 0.5) * Math.PI / fronds;
+    const length = 17 + (frond % 2) * 4;
+    const endX = topX + Math.cos(angle) * length;
+    const endY = topY + Math.sin(angle) * length * 0.55 + length * 0.42;
+    const controlX = topX + Math.cos(angle) * length * 0.55;
+    const controlY = topY + Math.sin(angle) * length * 0.55 - 5;
+    context.beginPath();
+    context.moveTo(topX, topY);
+    context.quadraticCurveTo(controlX, controlY - 2.2, endX, endY);
+    context.quadraticCurveTo(controlX, controlY + 2.4, topX, topY);
+    context.fillStyle = linearGradient(context, topX, topY - 8, topX, topY + 10, [[0, shade(leaves, 0.2)], [1, shade(leaves, -0.3)]]);
+    context.fill();
+    strokeSoft(context, leaves, 0.6, -0.55);
+  }
+  context.fillStyle = '#5a3a1c';
+  context.beginPath(); context.arc(topX - 1, topY + 1.5, 1.4, 0, TAU); context.arc(topX + 1.4, topY + 1.8, 1.2, 0, TAU); context.fill();
+}
+
+/** Polígono relleno a partir de una lista de puntos [x, y]. */
+function polygon(context, points, fill, outlineAmount = null) {
+  context.beginPath();
+  points.forEach(([px, py], index) => (index ? context.lineTo(px, py) : context.moveTo(px, py)));
+  context.closePath();
+  context.fillStyle = fill;
+  context.fill();
+  if (outlineAmount !== null) strokeSoft(context, typeof fill === 'string' && fill[0] === '#' ? fill : '#808080', 0.8, outlineAmount);
+}
+return { TAU, mix, shade, alpha, linearGradient, wrapDraw, roundedRect, ridge, haze, glow, strokeSoft, buildingBody, windowPane, softCloud, roundTree, palmTree, polygon };
+})();
+
+// ─── src/graphics/cityBackgrounds.js ───
+const __module_src_graphics_cityBackgrounds_js = (() => {
+/**
+ * @file Pintores de los fondos de cada ciudad, en alta resolución.
+ *
+ * Cada pintor recibe tres capas (lejana, intermedia y cercana) ya ampliadas a
+ * RENDER_SCALE y un generador aleatorio con semilla. Se pinta en píxeles
+ * lógicos (512 de ancho, suelo en y = 208). Lo lejano se funde con el color del
+ * cielo (perspectiva atmosférica) y lo cercano lleva contorno, luz y sombra.
+ */
+const { GROUND_SURFACE_Y } = __module_src_config_constants_js;
+const { BACKGROUND_LAYER_WIDTH } = __module_src_graphics_backgroundConstants_js;
+const { TAU, mix, shade, linearGradient, wrapDraw, roundedRect, ridge, haze, glow, strokeSoft, buildingBody, windowPane, roundTree, palmTree, polygon } = __module_src_graphics_backgroundKit_js;
+const { drawText, measureTextWidth } = __module_src_graphics_font_js;
+
+const GY = GROUND_SURFACE_Y;
+const W = BACKGROUND_LAYER_WIDTH;
+
+/** Elige un elemento de una lista con el generador con semilla. */
+const pick = (list, random) => list[Math.floor(random() * list.length)];
+
+/**
+ * Reparte edificios a lo ancho de la capa (la suma de anchos es exactamente W,
+ * así la capa se repite sin costuras).
+ * @returns {{x:number, width:number, height:number}[]}
+ */
+function layoutBuildings(random, { minWidth, maxWidth, minHeight, maxHeight, gap = 0 }) {
+  const items = [];
+  let total = 0;
+  while (total < W) {
+    const width = minWidth + random() * (maxWidth - minWidth);
+    items.push({ width, height: minHeight + random() * (maxHeight - minHeight) });
+    total += width + gap;
+  }
+  const scale = W / total;
+  let x = 0;
+  for (const item of items) {
+    item.width *= scale;
+    item.x = x;
+    x += item.width + gap * scale;
+  }
+  return items;
+}
+
+/** Rejilla de ventanas dentro de un edificio. */
+function windowGrid(context, random, { x, y, width, height, columns, rows, glass, frame, litChance = 0, arched = false, marginX = 4, marginTop = 6, marginBottom = 4 }) {
+  const cellWidth = (width - marginX * 2) / columns;
+  const cellHeight = (height - marginTop - marginBottom) / rows;
+  const paneWidth = Math.min(cellWidth * 0.58, 7);
+  const paneHeight = Math.min(cellHeight * 0.62, 11);
+  for (let row = 0; row < rows; row++) {
+    for (let column = 0; column < columns; column++) {
+      windowPane(context, x + marginX + column * cellWidth + (cellWidth - paneWidth) / 2, y + marginTop + row * cellHeight + (cellHeight - paneHeight) / 2, paneWidth, paneHeight, {
+        glass, frame, arched, lit: random() < litChance
+      });
     }
   }
 }
 
-/**
- * Cada función pinta las dos capas de una ciudad.
- * Parámetros comunes: (far, near, randomSource), donde `far` y `near` son los
- * contextos de las capas lejana y cercana.
- */
-const CITY_BACKGROUND_PAINTERS = {
-  /** Madrid: cúpula, las dos torres inclinadas, rascacielos y fachadas con balcones. */
-  madrid(far, near, randomSource) {
-    const silhouetteColor = '#6c94d8';
-    for (let x = 0; x < BACKGROUND_LAYER_WIDTH; x += 24) {
-      const height = 30 + Math.floor(randomSource() * 40);
-      fillRectangle(far, x, 190 - height, 22, height + 50, silhouetteColor);
-    }
-    // Edificio con cúpula y estatua.
-    fillRectangle(far, 120, 120, 30, 120, silhouetteColor);
-    fillCircle(far, 135, 120, 15, silhouetteColor);
-    fillRectangle(far, 134, 96, 2, 10, silhouetteColor);
-    fillRectangle(far, 131, 98, 8, 3, silhouetteColor);
-    // Dos torres inclinadas la una hacia la otra.
-    for (let step = 0; step < 70; step++) {
-      fillRectangle(far, 300 + Math.round(step * 0.25), 90 + step, 14, 1, silhouetteColor);
-      fillRectangle(far, 350 - Math.round(step * 0.25), 90 + step, 14, 1, silhouetteColor);
-    }
-    fillRectangle(far, 300, 160, 64, 80, silhouetteColor);
-    fillRectangle(far, 420, 70, 18, 170, silhouetteColor);
-    fillRectangle(far, 446, 60, 16, 180, silhouetteColor);
-    fillRectangle(far, 470, 80, 14, 160, silhouetteColor);
+/** Silueta lejana con degradado que se funde con la neblina. */
+function distantSilhouette(context, x, top, width, bottom, color, hazeColor) {
+  context.fillStyle = linearGradient(context, 0, top, 0, bottom, [[0, color], [1, mix(color, hazeColor, 0.6)]]);
+  context.fillRect(x, top, width, bottom - top);
+}
 
-    const facadeColors = ['#e8b888', '#d89478', '#f0d0a0', '#e0a890', '#c8a078'];
-    let x = 0;
-    while (x < BACKGROUND_LAYER_WIDTH) {
-      const width = 40 + Math.floor(randomSource() * 30);
-      const height = 60 + Math.floor(randomSource() * 50);
-      const top = GROUND_SURFACE_Y - height;
-      fillRectangle(near, x, top, width, height + 32, randomItem(facadeColors, randomSource));
-      fillRectangle(near, x, top, width, 3, '#8c5c3c');
-      paintWindows(near, { left: x, top: top + 4, width, height, color: '#3c4c7c', spacingX: 9, spacingY: 13, windowWidth: 4, windowHeight: 7 });
-      // Barandillas de los balcones.
-      for (let railY = top + 15; railY < 196; railY += 13) fillRectangle(near, x + 2, railY, width - 4, 1, '#3c3c3c');
-      x += width + 2 + Math.floor(randomSource() * 10);
-      if (randomSource() > 0.5) {
-        fillRectangle(near, x + 6, 170, 3, 40, '#5c3c24');
-        fillCircle(near, x + 7, 164, 10, '#4c8c3c');
-        x += 18;
-      }
+/** Farola de forja con globo luminoso. */
+function streetLamp(context, x, color = '#1c1a26', lit = true) {
+  context.fillStyle = color;
+  context.fillRect(x - 0.9, GY - 46, 1.8, 46);
+  context.fillRect(x - 3, GY - 3, 6, 3);
+  context.fillRect(x - 2, GY - 48, 4, 2);
+  context.beginPath(); context.moveTo(x - 4, GY - 48); context.lineTo(x + 4, GY - 48); context.lineTo(x + 2, GY - 53); context.lineTo(x - 2, GY - 53); context.closePath(); context.fill();
+  context.fillStyle = lit ? '#fff2b0' : '#bba';
+  roundedRect(context, x - 2.6, GY - 62, 5.2, 9, 2.2); context.fill();
+  strokeSoft(context, color, 0.8, 0);
+  if (lit) glow(context, x, GY - 57, 20, '#ffe28a', 0.32);
+}
+
+/** Guirnalda de banderines entre dos puntos. */
+function bunting(context, x0, y0, x1, y1, colors, sag = 8) {
+  context.strokeStyle = 'rgba(30,20,40,0.7)';
+  context.lineWidth = 0.6;
+  const midY = (y0 + y1) / 2 + sag;
+  context.beginPath(); context.moveTo(x0, y0); context.quadraticCurveTo((x0 + x1) / 2, midY, x1, y1); context.stroke();
+  const flags = Math.floor(Math.abs(x1 - x0) / 7);
+  for (let flag = 1; flag < flags; flag++) {
+    const t = flag / flags;
+    const px = (1 - t) * (1 - t) * x0 + 2 * (1 - t) * t * ((x0 + x1) / 2) + t * t * x1;
+    const py = (1 - t) * (1 - t) * y0 + 2 * (1 - t) * t * midY + t * t * y1;
+    polygon(context, [[px - 2.2, py], [px + 2.2, py], [px, py + 5]], colors[flag % colors.length], -0.5);
+  }
+}
+
+/** Gotas de luz del sol sobre el mar (reflejos horizontales). */
+function seaSparkles(context, random, y0, y1, color, count) {
+  context.fillStyle = color;
+  for (let index = 0; index < count; index++) {
+    const x = random() * W;
+    const y = y0 + random() * (y1 - y0);
+    const width = 3 + random() * 7;
+    context.globalAlpha = 0.25 + random() * 0.5;
+    context.fillRect(x, y, width, 0.7);
+  }
+  context.globalAlpha = 1;
+}
+
+/* ================================================================== */
+/* Pintores                                                            */
+/* ================================================================== */
+
+const CITY_PAINTERS = {
+  madrid({ far, mid, near }, random, { skyHorizon }) {
+    const silhouette = mix(skyHorizon, '#7f9be0', 0.55);
+    for (const building of layoutBuildings(random, { minWidth: 22, maxWidth: 38, minHeight: 50, maxHeight: 105 })) {
+      distantSilhouette(far, building.x, GY - building.height, building.width + 0.5, GY + 10, silhouette, skyHorizon);
     }
+    // Edificio con cúpula, linterna y estatua alada.
+    wrapDraw(far, 120, 60, x => {
+      far.fillStyle = shade(silhouette, 0.04);
+      far.fillRect(x, GY - 118, 44, 120);
+      far.beginPath(); far.arc(x + 22, GY - 118, 21, Math.PI, 0); far.fill();
+      far.fillRect(x + 20.5, GY - 150, 3, 12);
+      far.beginPath(); far.arc(x + 22, GY - 152, 3, 0, TAU); far.fill();
+    });
+    // Torres inclinadas la una hacia la otra.
+    wrapDraw(far, 300, 60, x => {
+      for (const side of [-1, 1]) {
+        const baseX = x + 24 + side * 14;
+        polygon(far, [[baseX - 8, GY], [baseX + 8, GY], [baseX + 8 - side * 20, GY - 150], [baseX - 8 - side * 20, GY - 150]], silhouette);
+      }
+    });
+    // Cuatro rascacielos con cristal.
+    [[420, 150], [444, 165], [468, 140], [490, 158]].forEach(([x, height]) => {
+      far.fillStyle = linearGradient(far, x, 0, x + 16, 0, [[0, shade(silhouette, 0.12)], [1, shade(silhouette, -0.1)]]);
+      far.fillRect(x, GY - height, 15, height + 10);
+      far.fillStyle = 'rgba(255,255,255,0.18)';
+      far.fillRect(x + 1.5, GY - height, 1.2, height);
+    });
+    haze(far, GY - 60, GY, skyHorizon, 0, 0.7);
+
+    // Plano intermedio: casas bajas con tejados rojos.
+    const lowColors = ['#e9c9a4', '#e3b49a', '#efd8b2', '#d9b9a0'];
+    for (const building of layoutBuildings(random, { minWidth: 30, maxWidth: 46, minHeight: 52, maxHeight: 84, gap: 2 })) {
+      const color = mix(pick(lowColors, random), skyHorizon, 0.32);
+      buildingBody(mid, { x: building.x, y: GY - building.height, width: building.width, height: building.height + 8, color, outline: false, roof: 'tile', roofColor: mix('#b5503a', skyHorizon, 0.25) });
+      windowGrid(mid, random, { x: building.x, y: GY - building.height, width: building.width, height: building.height, columns: Math.max(2, Math.round(building.width / 11)), rows: Math.round(building.height / 18), glass: mix('#5c6ea8', skyHorizon, 0.2), frame: mix('#fff6e4', color, 0.4), litChance: 0 });
+    }
+    haze(mid, GY - 50, GY, skyHorizon, 0, 0.45);
+
+    // Plano cercano: fachadas grandes con balcones, contraventanas y plantas.
+    const facades = ['#e9a88c', '#f0cf9a', '#e2907a', '#efd9b4', '#d9b690'];
+    const row = layoutBuildings(random, { minWidth: 46, maxWidth: 64, minHeight: 84, maxHeight: 120, gap: 34 });
+    for (const building of row) {
+      const color = pick(facades, random);
+      const top = GY - building.height;
+      buildingBody(near, { x: building.x, y: top, width: building.width, height: building.height + 8, color });
+      const rows = Math.floor(building.height / 26);
+      const columns = Math.max(2, Math.round(building.width / 17));
+      const cellWidth = (building.width - 8) / columns;
+      for (let r = 0; r < rows; r++) {
+        const rowY = top + 10 + r * 26;
+        for (let c = 0; c < columns; c++) {
+          const wx = building.x + 4 + c * cellWidth + (cellWidth - 8) / 2;
+          windowPane(near, wx, rowY, 8, 14, { glass: '#445587', frame: '#fff4de', arched: r === 0 });
+          // Contraventanas verdes.
+          near.fillStyle = '#4a8a5a';
+          near.fillRect(wx - 3.2, rowY, 2.6, 14); near.fillRect(wx + 8.6, rowY, 2.6, 14);
+          near.fillStyle = 'rgba(0,0,0,0.2)';
+          for (let slat = 1; slat < 14; slat += 2) { near.fillRect(wx - 3.2, rowY + slat, 2.6, 0.4); near.fillRect(wx + 8.6, rowY + slat, 2.6, 0.4); }
+        }
+        // Balcón con barandilla y macetas.
+        const balconyY = rowY + 15;
+        near.fillStyle = '#2d2a38';
+        near.fillRect(building.x + 2, balconyY, building.width - 4, 1.4);
+        for (let bar = building.x + 3; bar < building.x + building.width - 3; bar += 2.6) near.fillRect(bar, balconyY - 4.5, 0.6, 4.5);
+        near.fillRect(building.x + 2, balconyY - 4.6, building.width - 4, 0.8);
+        for (let c = 0; c < columns; c += 2) {
+          const px = building.x + 6 + c * cellWidth;
+          near.fillStyle = '#b8603c'; near.fillRect(px, balconyY - 3, 4, 3);
+          near.fillStyle = random() > 0.5 ? '#d83a54' : '#f0c030';
+          near.beginPath(); near.arc(px + 2, balconyY - 4.6, 2.4, 0, TAU); near.fill();
+        }
+      }
+      // Portal y toldo.
+      near.fillStyle = '#3a2a22';
+      roundedRect(near, building.x + building.width / 2 - 5, GY - 24, 10, 26, 4); near.fill();
+      near.fillStyle = pick(['#d83a3a', '#2a64c8', '#e8a020'], random);
+      near.beginPath(); near.moveTo(building.x + building.width / 2 - 8, GY - 22); near.lineTo(building.x + building.width / 2 + 8, GY - 22); near.lineTo(building.x + building.width / 2 + 10, GY - 17); near.lineTo(building.x + building.width / 2 - 10, GY - 17); near.closePath(); near.fill();
+    }
+    for (const lampX of [20, 230, 400]) streetLamp(near, lampX);
+    bunting(near, 140, GY - 120, 214, GY - 112, ['#d83a3a', '#f0c030', '#d83a3a', '#fff'], 7);
+    bunting(near, 300, GY - 130, 392, GY - 118, ['#2a64c8', '#fff', '#d83a3a', '#f0c030'], 9);
+    haze(near, GY - 24, GY, '#2a1c3c', 0, 0.28);
   },
 
-  /** Benidorm: el mar, rascacielos blancos, una torre con arco dorado y palmeras. */
-  benidorm(far, near, randomSource) {
-    fillRectangle(far, 0, 176, BACKGROUND_LAYER_WIDTH, 64, '#2878d8');
-    for (let x = 0; x < BACKGROUND_LAYER_WIDTH; x += 12) fillRectangle(far, x + (x % 24), 182 + (x % 5) * 4, 6, 1, '#7cc0fc');
-    let x = 4;
-    while (x < BACKGROUND_LAYER_WIDTH) {
-      const width = 18 + Math.floor(randomSource() * 16);
-      const height = 70 + Math.floor(randomSource() * 90);
-      fillRectangle(far, x, 178 - height, width, height, '#d8e4f0');
-      paintWindows(far, { left: x, top: 178 - height, width, height, color: '#98acc8', spacingX: 5, spacingY: 6, windowWidth: 3, windowHeight: 3 });
-      x += width + 6 + Math.floor(randomSource() * 18);
+  benidorm({ far, mid, near }, random, { skyHorizon }) {
+    const sea = '#2f86d6';
+    far.fillStyle = linearGradient(far, 0, GY - 52, 0, GY + 2, [[0, mix(sea, skyHorizon, 0.55)], [1, shade(sea, -0.15)]]);
+    far.fillRect(0, GY - 52, W, 60);
+    seaSparkles(far, random, GY - 50, GY - 4, '#ffffff', 90);
+    // Isla y rascacielos lejanos.
+    ridge(far, { baseY: GY - 52, amplitude: 10, periods: 1, phase: 1.2, fill: mix('#7a9ab8', skyHorizon, 0.45), bottom: GY - 50 });
+    for (const building of layoutBuildings(random, { minWidth: 14, maxWidth: 24, minHeight: 50, maxHeight: 105, gap: 10 })) {
+      const color = mix('#e6eef8', skyHorizon, 0.35);
+      far.fillStyle = linearGradient(far, building.x, 0, building.x + building.width, 0, [[0, shade(color, 0.1)], [1, shade(color, -0.12)]]);
+      far.fillRect(building.x, GY - 52 - building.height, building.width, building.height);
+      far.fillStyle = 'rgba(80,110,150,0.35)';
+      for (let y = GY - 52 - building.height + 4; y < GY - 56; y += 5) far.fillRect(building.x + 2, y, building.width - 4, 1.6);
     }
-    for (const towerX of [250, 282]) {
-      fillRectangle(far, towerX, 20, 16, 158, '#e8eef8');
-      paintWindows(far, { left: towerX, top: 20, width: 16, height: 158, color: '#98acc8', spacingX: 5, spacingY: 6, windowWidth: 3, windowHeight: 3 });
-    }
-    fillRectangle(far, 250, 14, 48, 8, '#e8b030');
-    fillTriangle(far, 262, 14, 24, 10, '#e8b030');
+    // Torre con arco dorado.
+    wrapDraw(far, 330, 60, x => {
+      for (const tx of [x, x + 30]) { far.fillStyle = '#eef3fb'; far.fillRect(tx, GY - 205, 18, 160); far.fillStyle = 'rgba(80,110,150,0.4)'; for (let y = GY - 200; y < GY - 52; y += 5) far.fillRect(tx + 2, y, 14, 1.8); }
+      far.strokeStyle = '#f0b830'; far.lineWidth = 3.2; far.beginPath(); far.arc(x + 24, GY - 195, 24, Math.PI * 1.02, Math.PI * 1.98); far.stroke();
+    });
+    haze(far, GY - 70, GY, skyHorizon, 0, 0.6);
 
-    for (let palmX = 20; palmX < BACKGROUND_LAYER_WIDTH; palmX += 90 + Math.floor(randomSource() * 60)) {
-      for (let step = 0; step < 60; step++) fillRectangle(near, palmX + Math.round(Math.sin(step / 20) * 4), GROUND_SURFACE_Y - step, 4, 1, '#8c5c30');
-      const crownX = palmX + Math.round(Math.sin(3) * 4);
-      const crownY = 148;
-      for (let frond = 0; frond < 6; frond++) {
-        const angle = -Math.PI + frond * Math.PI / 5;
-        for (let length = 0; length < 20; length++) {
-          fillRectangle(near, crownX + Math.cos(angle) * length, crownY + Math.sin(angle) * length * 0.6 + length * length / 60, 3, 2, '#3c9c3c');
+    // Intermedio: hoteles blancos con balcones azules.
+    for (const building of layoutBuildings(random, { minWidth: 28, maxWidth: 40, minHeight: 60, maxHeight: 118, gap: 6 })) {
+      const color = mix('#f6f6f0', skyHorizon, 0.18);
+      buildingBody(mid, { x: building.x, y: GY - building.height, width: building.width, height: building.height + 8, color, outline: false });
+      for (let y = GY - building.height + 6; y < GY - 8; y += 9) {
+        mid.fillStyle = mix('#3aa0e8', skyHorizon, 0.2); mid.fillRect(building.x + 3, y, building.width - 6, 5);
+        mid.fillStyle = '#ffffff'; mid.fillRect(building.x + 2, y + 5, building.width - 4, 1.4);
+      }
+    }
+    haze(mid, GY - 40, GY, skyHorizon, 0, 0.4);
+
+    // Cercano: palmeras, sombrillas y casetas de playa.
+    for (let x = 30; x < W; x += 128) {
+      wrapDraw(near, x, 80, px => palmTree(near, px, GY, 78 + random() * 20, 8 + random() * 6));
+    }
+    for (let x = 90; x < W; x += 170) {
+      wrapDraw(near, x, 60, px => {
+        near.fillStyle = '#4a4a50'; near.fillRect(px - 0.6, GY - 36, 1.2, 36);
+        const colors = ['#ff4d5a', '#ffffff'];
+        for (let seg = 0; seg < 6; seg++) {
+          const a0 = Math.PI + seg * Math.PI / 6; const a1 = a0 + Math.PI / 6;
+          near.beginPath(); near.moveTo(px, GY - 36); near.arc(px, GY - 36, 18, a0, a1); near.closePath(); near.fillStyle = colors[seg % 2]; near.fill();
+        }
+        near.beginPath(); near.arc(px, GY - 36, 18, Math.PI, 0); strokeSoft(near, '#ff4d5a', 0.8, -0.6);
+      });
+    }
+    for (let x = 200; x < W; x += 250) {
+      wrapDraw(near, x, 28, px => {
+        for (let stripe = 0; stripe < 4; stripe++) { near.fillStyle = stripe % 2 ? '#ffffff' : '#2a8ae0'; near.fillRect(px + stripe * 6, GY - 26, 6, 26); }
+        polygon(near, [[px - 2, GY - 26], [px + 26, GY - 26], [px + 12, GY - 38]], '#2a8ae0', -0.5);
+        near.fillStyle = '#6a4a2a'; near.fillRect(px + 8, GY - 14, 8, 14);
+      });
+    }
+    haze(near, GY - 20, GY, '#c8a060', 0, 0.35);
+  },
+
+  sevilla({ far, mid, near }, random, { skyHorizon }) {
+    const silhouette = mix(skyHorizon, '#c8845c', 0.5);
+    for (const building of layoutBuildings(random, { minWidth: 24, maxWidth: 40, minHeight: 36, maxHeight: 62 })) {
+      distantSilhouette(far, building.x, GY - building.height, building.width + 0.5, GY + 10, silhouette, skyHorizon);
+    }
+    // La Giralda.
+    wrapDraw(far, 236, 40, x => {
+      const stone = mix('#d9945c', skyHorizon, 0.35);
+      far.fillStyle = linearGradient(far, x, 0, x + 28, 0, [[0, shade(stone, 0.12)], [1, shade(stone, -0.18)]]);
+      far.fillRect(x, GY - 150, 28, 152);
+      far.fillStyle = shade(stone, -0.25);
+      for (let y = GY - 140; y < GY - 30; y += 22) { windowPane(far, x + 5, y, 4, 12, { glass: '#4a3028', frame: shade(stone, 0.2), arched: true, sill: false }); windowPane(far, x + 19, y, 4, 12, { glass: '#4a3028', frame: shade(stone, 0.2), arched: true, sill: false }); }
+      far.fillStyle = stone; far.fillRect(x + 3, GY - 178, 22, 28);
+      for (let arch = 0; arch < 3; arch++) windowPane(far, x + 6 + arch * 6.2, GY - 174, 4, 14, { glass: '#3a2418', frame: shade(stone, 0.15), arched: true, sill: false });
+      far.fillRect(x + 7, GY - 190, 14, 12); far.fillRect(x + 10, GY - 200, 8, 10);
+      far.beginPath(); far.arc(x + 14, GY - 202, 3, 0, TAU); far.fillStyle = '#e8b848'; far.fill();
+      far.fillRect(x + 13.4, GY - 214, 1.2, 10);
+    });
+    haze(far, GY - 70, GY, skyHorizon, 0, 0.6);
+
+    // Intermedio: casas blancas encaladas con tejados naranjas y arcos.
+    for (const building of layoutBuildings(random, { minWidth: 30, maxWidth: 48, minHeight: 50, maxHeight: 80, gap: 2 })) {
+      const color = mix('#fbf1e0', skyHorizon, 0.22);
+      buildingBody(mid, { x: building.x, y: GY - building.height, width: building.width, height: building.height + 8, color, outline: false, roof: 'tile', roofColor: mix('#d8683a', skyHorizon, 0.2) });
+      windowGrid(mid, random, { x: building.x, y: GY - building.height, width: building.width, height: building.height, columns: Math.max(2, Math.round(building.width / 14)), rows: Math.round(building.height / 22), glass: '#5a4a58', frame: '#3a8a4a', arched: true, marginTop: 8 });
+    }
+    haze(mid, GY - 44, GY, skyHorizon, 0, 0.4);
+
+    // Cercano: casetas de feria a rayas, farolillos y naranjos.
+    const pairs = [['#e8302c', '#ffffff'], ['#1a9a4a', '#ffffff'], ['#2a5ac8', '#ffffff']];
+    for (let x = 6; x < W; x += 102) {
+      const [main, stripe] = pick(pairs, random);
+      wrapDraw(near, x, 80, px => {
+        for (let s = 0; s < 8; s++) { near.fillStyle = s % 2 ? stripe : main; near.fillRect(px + s * 6, GY - 42, 6, 42); }
+        near.strokeStyle = shade(main, -0.55); near.lineWidth = 0.9; near.strokeRect(px, GY - 42, 48, 42);
+        polygon(near, [[px - 4, GY - 42], [px + 52, GY - 42], [px + 24, GY - 66]], main, -0.55);
+        near.fillStyle = 'rgba(255,255,255,0.18)'; near.beginPath(); near.moveTo(px - 4, GY - 42); near.lineTo(px + 24, GY - 66); near.lineTo(px + 24, GY - 42); near.closePath(); near.fill();
+        near.fillStyle = '#3a2418'; roundedRect(near, px + 16, GY - 24, 14, 24, 6); near.fill();
+        near.fillStyle = '#ffe9a8'; near.fillRect(px + 20, GY - 20, 6, 8);
+      });
+    }
+    const lantern = ['#ff3a3a', '#27c060', '#ffd020', '#ffffff'];
+    for (let x = 0; x < W; x += 64) {
+      near.strokeStyle = 'rgba(40,30,30,0.7)'; near.lineWidth = 0.6;
+      near.beginPath(); near.moveTo(x, GY - 76); near.quadraticCurveTo(x + 32, GY - 58, x + 64, GY - 76); near.stroke();
+      for (let l = 1; l < 8; l++) {
+        const t = l / 8; const px = x + 64 * t; const py = (1 - t) * (1 - t) * (GY - 76) + 2 * (1 - t) * t * (GY - 58) + t * t * (GY - 76);
+        const color = lantern[l % 4];
+        near.fillStyle = color; near.beginPath(); near.ellipse(px, py + 3.2, 2, 3, 0, 0, TAU); near.fill();
+        glow(near, px, py + 3.2, 9, color, 0.55);
+      }
+    }
+    for (let x = 60; x < W; x += 200) wrapDraw(near, x, 30, px => roundTree(near, px, GY, 46, { leaves: '#4aa040' }));
+    haze(near, GY - 20, GY, '#8a4a22', 0, 0.3);
+  },
+
+  pamplona({ far, mid, near }, random, { skyHorizon }) {
+    // Pirineos nevados.
+    const mountainColor = mix('#6f8fb8', skyHorizon, 0.45);
+    ridge(far, { baseY: GY - 70, amplitude: 70, periods: 3, phase: 0.4, fill: linearGradient(far, 0, GY - 150, 0, GY, [[0, mountainColor], [1, mix(mountainColor, skyHorizon, 0.7)]]), sharpness: 0.7 });
+    ridge(far, { baseY: GY - 46, amplitude: 34, periods: 4, phase: 2.1, fill: mix('#5f8a78', skyHorizon, 0.5), sharpness: 0.3 });
+    haze(far, GY - 90, GY, skyHorizon, 0, 0.6);
+    // Colinas verdes con árboles y campanario.
+    ridge(mid, { baseY: GY - 40, amplitude: 22, periods: 3, phase: 1, fill: linearGradient(mid, 0, GY - 70, 0, GY, [[0, mix('#4a9a58', skyHorizon, 0.3)], [1, mix('#2e7a44', skyHorizon, 0.3)]]), rim: 'rgba(200,255,180,0.35)' });
+    for (let x = 14; x < W; x += 38) roundTree(mid, x + random() * 14, GY - 18 + random() * 8, 24 + random() * 10, { leaves: mix('#2f8a3c', skyHorizon, 0.25), outline: false });
+    wrapDraw(mid, 260, 20, x => {
+      mid.fillStyle = mix('#c9b79a', skyHorizon, 0.3); mid.fillRect(x, GY - 82, 12, 70);
+      polygon(mid, [[x - 1, GY - 82], [x + 13, GY - 82], [x + 6, GY - 102]], mix('#8a4a30', skyHorizon, 0.3));
+      windowPane(mid, x + 4, GY - 70, 4, 9, { glass: '#4a3a30', frame: '#e8d8b8', arched: true, sill: false });
+    });
+    haze(mid, GY - 40, GY, skyHorizon, 0, 0.4);
+    // Casas de piedra con balcones de madera y pañuelos rojos.
+    const stone = ['#d3c3a2', '#c4b090', '#dccdae'];
+    for (const building of layoutBuildings(random, { minWidth: 48, maxWidth: 70, minHeight: 100, maxHeight: 140, gap: 3 })) {
+      const color = pick(stone, random);
+      const top = GY - building.height;
+      buildingBody(near, { x: building.x, y: top, width: building.width, height: building.height + 8, color, roof: 'tile', roofColor: '#9a4c30' });
+      // Sillares.
+      near.strokeStyle = 'rgba(70,50,30,0.22)'; near.lineWidth = 0.4;
+      for (let y = top + 6; y < GY; y += 7) { near.beginPath(); near.moveTo(building.x, y); near.lineTo(building.x + building.width, y); near.stroke(); }
+      for (let r = 0; r < Math.floor(building.height / 30); r++) {
+        const rowY = top + 14 + r * 30;
+        near.fillStyle = '#6a4220'; near.fillRect(building.x + 3, rowY + 14, building.width - 6, 3);
+        near.fillStyle = shade('#6a4220', -0.4); near.fillRect(building.x + 3, rowY + 16, building.width - 6, 1);
+        for (let post = building.x + 4; post < building.x + building.width - 4; post += 5) { near.fillStyle = '#7a5230'; near.fillRect(post, rowY + 7, 1, 7); }
+        const doors = Math.max(2, Math.round(building.width / 22));
+        for (let d = 0; d < doors; d++) {
+          const dx = building.x + 6 + d * ((building.width - 12) / doors);
+          windowPane(near, dx, rowY - 2, 7, 15, { glass: '#3c3048', frame: '#6a4220', sill: false });
+          if (random() > 0.35) { // pañuelo rojo
+            polygon(near, [[dx + 8, rowY + 15], [dx + 12.5, rowY + 15], [dx + 12.5, rowY + 22], [dx + 10.2, rowY + 20], [dx + 8, rowY + 22]], '#d92020', -0.5);
+          }
         }
       }
     }
+    // Vallado de madera.
+    for (let x = 0; x < W; x += 7) { near.fillStyle = '#7a4a24'; near.fillRect(x, GY - 14, 5, 14); near.fillStyle = 'rgba(255,255,255,0.15)'; near.fillRect(x, GY - 14, 1.2, 14); }
+    near.fillStyle = '#5a3418'; near.fillRect(0, GY - 11, W, 2.4); near.fillRect(0, GY - 5, W, 2.4);
+    haze(near, GY - 24, GY, '#2a1c14', 0, 0.3);
   },
 
-  /** Sevilla: casas blancas, la Giralda, casetas de feria a rayas y farolillos. */
-  sevilla(far, near, randomSource) {
-    for (let x = 0; x < BACKGROUND_LAYER_WIDTH; x += 30) {
-      const height = 20 + Math.floor(randomSource() * 25);
-      fillRectangle(far, x, 190 - height, 28, height + 50, '#f8ecd8');
-      fillRectangle(far, x, 190 - height, 28, 2, '#e8c890');
-    }
-    const towerX = 240;
-    const stone = '#d8945c';
-    const shadow = '#b87038';
-    fillRectangle(far, towerX, 60, 26, 180, stone);
-    fillRectangle(far, towerX + 3, 34, 20, 26, stone);
-    fillRectangle(far, towerX + 6, 18, 14, 16, stone);
-    fillRectangle(far, towerX + 9, 8, 8, 10, stone);
-    fillRectangle(far, towerX + 12, 0, 2, 8, shadow);
-    for (let y = 70; y < 180; y += 16) {
-      fillRectangle(far, towerX + 6, y, 4, 8, shadow);
-      fillRectangle(far, towerX + 16, y, 4, 8, shadow);
-    }
-    fillRectangle(far, towerX + 30, 110, 90, 130, stone);
-    fillTriangle(far, towerX + 30, 110, 90, 20, shadow);
-
-    const stripePairs = [['#fc4040', '#fcfcfc'], ['#00a844', '#fcfcfc']];
-    for (let x = 0; x < BACKGROUND_LAYER_WIDTH; x += 68) {
-      const [mainColor, stripeColor] = randomItem(stripePairs, randomSource);
-      for (let stripe = 0; stripe < 48; stripe += 6) fillRectangle(near, x + stripe, 168, 6, 40, (stripe / 6) % 2 ? stripeColor : mainColor);
-      fillTriangle(near, x - 2, 168, 52, 18, mainColor);
-      fillRectangle(near, x + 18, 184, 12, 24, '#3c2410');
-    }
-    const lanternColors = ['#fc4040', '#00c050', '#fcd800', '#fcfcfc'];
-    for (let stringX = 0; stringX < BACKGROUND_LAYER_WIDTH; stringX += 64) {
-      for (let offset = 0; offset < 64; offset += 4) {
-        const y = 140 + Math.round(Math.sin(offset / 64 * Math.PI) * 14);
-        fillRectangle(near, stringX + offset, y, 1, 1, '#3c3c3c');
-        if (offset % 8 === 0) fillRectangle(near, stringX + offset - 1, y + 1, 3, 4, lanternColors[(offset / 8) % 4]);
+  metro({ far, mid, near }, random) {
+    // Pared de azulejos blancos y azules con reflejos.
+    far.fillStyle = linearGradient(far, 0, 0, 0, 240, [[0, '#161a2a'], [0.5, '#222a40'], [1, '#2e3852']]);
+    far.fillRect(0, 0, W, 240);
+    for (let y = 36; y < GY; y += 9) {
+      for (let x = (Math.floor(y / 9) % 2) ? 0 : 7; x < W + 14; x += 14) {
+        far.fillStyle = (Math.floor(x / 14) + Math.floor(y / 9)) % 7 === 0 ? '#2e4a8c' : '#3a4562';
+        roundedRect(far, x + 0.5, y + 0.5, 13, 8, 1.4); far.fill();
+        far.fillStyle = 'rgba(255,255,255,0.08)'; far.fillRect(x + 1.5, y + 1, 11, 1.4);
       }
     }
-  },
-
-  /** Pamplona: montes verdes y casas de piedra con balcones y pañuelos rojos. */
-  pamplona(far, near, randomSource) {
-    for (let x = -40; x < BACKGROUND_LAYER_WIDTH + 40; x += 70) fillTriangle(far, x, 180, 140, 60 + Math.floor(randomSource() * 40), '#6c8c7c');
-    for (let x = -20; x < BACKGROUND_LAYER_WIDTH + 20; x += 50) fillTriangle(far, x, 190, 90, 40, '#5c7c6c');
-    let x = 0;
-    while (x < BACKGROUND_LAYER_WIDTH) {
-      const width = 44 + Math.floor(randomSource() * 20);
-      const height = 80 + Math.floor(randomSource() * 40);
-      const top = GROUND_SURFACE_Y - height;
-      fillRectangle(near, x, top, width, height, randomItem(['#c8b89c', '#b8a88c', '#d4c4a4'], randomSource));
-      fillTriangle(near, x - 4, top, width + 8, 12, '#8c4c30');
-      for (let balconyY = top + 14; balconyY < 190; balconyY += 22) {
-        fillRectangle(near, x + 4, balconyY, width - 8, 12, '#6c4020');
-        fillRectangle(near, x + 4, balconyY + 10, width - 8, 2, '#3c2010');
-        for (let flagX = x + 6; flagX < x + width - 8; flagX += 12) fillRectangle(near, flagX, balconyY + 12, 6, 8, '#d82020');
-      }
-      x += width + 4;
+    far.fillStyle = '#1b3cae'; far.fillRect(0, 100, W, 12);
+    far.fillStyle = '#6b8cff'; far.fillRect(0, 101.4, W, 1.8);
+    far.fillStyle = 'rgba(0,0,0,0.35)'; far.fillRect(0, 112, W, 2);
+    // Arcos de túnel con luces.
+    for (let x = 0; x < W; x += 128) {
+      mid.fillStyle = linearGradient(mid, 0, 0, 0, GY, [[0, 'rgba(10,12,22,0.95)'], [1, 'rgba(20,24,40,0.7)']]);
+      mid.beginPath(); mid.moveTo(x + 6, GY); mid.lineTo(x + 6, 76); mid.arc(x + 64, 76, 58, Math.PI, 0); mid.lineTo(x + 122, GY); mid.closePath(); mid.fill();
+      strokeSoft(mid, '#566086', 1.4, 0);
+      // Perspectiva del túnel: rieles brillantes.
+      mid.strokeStyle = 'rgba(160,180,255,0.25)'; mid.lineWidth = 0.8;
+      mid.beginPath(); mid.moveTo(x + 40, GY); mid.lineTo(x + 60, 140); mid.moveTo(x + 88, GY); mid.lineTo(x + 68, 140); mid.stroke();
     }
-  },
-
-  /** Metro: pared de azulejos, franja azul, carteles de estaciones y columnas. */
-  metro(far, near) {
-    fillRectangle(far, 0, 0, BACKGROUND_LAYER_WIDTH, SCREEN_HEIGHT, '#2c3040');
-    for (let y = 40; y < 200; y += 6) {
-      for (let x = (y / 6) % 2 ? 0 : 5; x < BACKGROUND_LAYER_WIDTH; x += 10) fillRectangle(far, x, y, 9, 5, '#3c4458');
-    }
-    fillRectangle(far, 0, 100, BACKGROUND_LAYER_WIDTH, 10, '#1c3ca8');
-    fillRectangle(far, 0, 102, BACKGROUND_LAYER_WIDTH, 2, '#5c7cf8');
-    ['SOL', 'CALLAO', 'ÓPERA', 'TRIBUNAL'].forEach((stationName, index) => {
-      const signWidth = measureTextWidth(stationName) + 16;
-      const signX = index * 128 + 20;
-      fillRectangle(far, signX, 70, signWidth, 16, '#1c3ca8');
-      fillRectangle(far, signX + 1, 71, signWidth - 2, 14, '#2c50c8');
-      drawText(far, stationName, signX + 8, 75, '#fcfcfc');
+    for (let x = 0; x < W; x += 64) { glow(mid, x + 32, 22, 38, '#cfe0ff', 0.5); mid.fillStyle = '#eaf2ff'; roundedRect(mid, x + 20, 18, 24, 4, 2); mid.fill(); }
+    // Carteles de estación luminosos.
+    ['SOL', 'CALLAO', 'ÓPERA', 'TRIBUNAL'].forEach((name, index) => {
+      const signWidth = measureTextWidth(name) + 20;
+      const signX = index * 128 + 64 - signWidth / 2;
+      glow(near, signX + signWidth / 2, 78, signWidth, '#4a7cff', 0.35);
+      near.fillStyle = '#0f2a8c'; roundedRect(near, signX, 68, signWidth, 20, 3); near.fill();
+      near.fillStyle = linearGradient(near, 0, 69, 0, 87, [[0, '#4a78ff'], [1, '#2144c8']]); roundedRect(near, signX + 1, 69, signWidth - 2, 18, 2.4); near.fill();
+      near.fillStyle = '#ffffff'; near.beginPath(); near.arc(signX + 9, 78, 4.2, 0, TAU); near.fill();
+      near.fillStyle = '#d4222a'; near.fillRect(signX + 5.6, 76.8, 6.8, 2.4);
+      drawText(near, name, signX + 16, 74, '#ffffff');
     });
-    for (let x = 0; x < BACKGROUND_LAYER_WIDTH; x += 64) {
-      fillRectangle(near, x + 20, 30, 12, 178, '#1c2030');
-      fillRectangle(near, x + 22, 30, 2, 178, '#3c4458');
+    // Columnas de hierro con luz.
+    for (let x = 0; x < W; x += 128) {
+      wrapDraw(near, x - 6, 12, pillarX => {
+        near.fillStyle = linearGradient(near, pillarX, 0, pillarX + 12, 0, [[0, '#4a5274'], [0.4, '#2c3350'], [1, '#12162a']]);
+        near.fillRect(pillarX, 26, 12, GY - 26);
+        near.fillStyle = '#6a739a'; near.fillRect(pillarX - 3, 26, 18, 4); near.fillRect(pillarX - 3, GY - 6, 18, 6);
+        near.fillStyle = 'rgba(255,255,255,0.16)'; near.fillRect(pillarX + 1, 30, 1.4, GY - 36);
+      });
     }
+    haze(near, GY - 30, GY, '#05060e', 0, 0.45);
   },
 
-  /** Galicia: colinas verdes, un faro, hórreos y eucaliptos. */
-  galicia(far, near, randomSource) {
-    for (let x = -30; x < BACKGROUND_LAYER_WIDTH + 40; x += 60) fillCircle(far, x, 200, 50 + Math.floor(randomSource() * 30), '#3c6c4c');
-    for (let x = 0; x < BACKGROUND_LAYER_WIDTH + 40; x += 40) fillCircle(far, x, 215, 36, '#2c5c3c');
-    fillRectangle(far, 400, 90, 10, 60, '#d8d8d8');
-    fillRectangle(far, 398, 84, 14, 8, '#c83c28');
-    fillRectangle(far, 402, 80, 6, 4, '#fcd800');
-    let x = 10;
-    while (x < BACKGROUND_LAYER_WIDTH) {
-      if (randomSource() > 0.4) {
-        // Hórreo: granero de piedra sobre pies con tejado a dos aguas y cruz.
-        fillRectangle(near, x, 196, 3, 12, '#8c8c8c');
-        fillRectangle(near, x + 25, 196, 3, 12, '#8c8c8c');
-        fillRectangle(near, x - 2, 194, 32, 3, '#9c9c9c');
-        fillRectangle(near, x - 1, 170, 30, 24, '#a89878');
-        for (let slat = 2; slat < 28; slat += 4) fillRectangle(near, x - 1 + slat, 172, 1, 20, '#7c6c54');
-        fillTriangle(near, x - 5, 170, 38, 10, '#6c6c74');
-        fillRectangle(near, x + 13, 154, 2, 8, '#6c6c74');
-        fillRectangle(near, x + 10, 156, 8, 2, '#6c6c74');
-        x += 60;
-      } else {
-        fillRectangle(near, x + 4, 120, 3, 88, '#9c8c7c');
-        fillCircle(near, x + 5, 118, 12, '#4c7c5c');
-        fillCircle(near, x + 5, 136, 10, '#4c7c5c');
-        x += 40;
-      }
-    }
-  },
-
-  /** Valencia: ciudad al atardecer, el edificio con forma de ojo y figuras de fallas. */
-  valencia(far, near, randomSource) {
-    for (let x = 0; x < BACKGROUND_LAYER_WIDTH; x += 22) {
-      const height = 30 + Math.floor(randomSource() * 50);
-      fillRectangle(far, x, 200 - height, 20, height + 40, '#3c2c50');
-      paintWindows(far, { left: x, top: 200 - height, width: 20, height, color: '#fcd87c', spacingX: 6, spacingY: 8, windowWidth: 2, windowHeight: 3 }, randomSource);
-    }
-    for (let step = 0; step < 90; step++) {
-      const height = Math.round(Math.sin(step / 90 * Math.PI) * 26);
-      fillRectangle(far, 200 + step, 176 - height, 1, height + 4, '#d8d8ec');
-    }
-    for (let step = 20; step < 70; step++) {
-      const height = Math.round(Math.sin((step - 20) / 50 * Math.PI) * 10);
-      fillRectangle(far, 200 + step, 164 - height, 1, height * 2, '#6c8cc8');
-    }
-    let x = 20;
-    while (x < BACKGROUND_LAYER_WIDTH) {
-      // "Ninot" de falla: figura caricaturesca sobre un pedestal.
-      fillRectangle(near, x, 188, 50, 20, '#8c5c3c');
-      const clothesColor = randomItem(['#fca0c0', '#8cd8fc', '#fce07c', '#b8fc9c'], randomSource);
-      fillRectangle(near, x + 14, 130, 22, 58, clothesColor);
-      fillCircle(near, x + 25, 118, 16, '#fcd0b0');
-      fillCircle(near, x + 25, 124, 6, '#fc7c7c');
-      fillRectangle(near, x + 17, 112, 4, 4, '#101010');
-      fillRectangle(near, x + 29, 112, 4, 4, '#101010');
-      fillRectangle(near, x + 6, 140, 8, 26, clothesColor);
-      fillRectangle(near, x + 36, 132, 8, 22, clothesColor);
-      fillRectangle(near, x + 10, 98, 30, 6, '#3c3c3c');
-      fillRectangle(near, x + 16, 86, 18, 12, '#3c3c3c');
-      x += 110 + Math.floor(randomSource() * 40);
-    }
-  },
-
-  /** La Mancha de noche: estrellas, luna llena, colinas y molinos de viento. */
-  mancha(far, near, randomSource) {
-    for (let star = 0; star < 90; star++) {
-      fillRectangle(far, Math.floor(randomSource() * BACKGROUND_LAYER_WIDTH), Math.floor(randomSource() * 140), 1, 1, randomSource() > 0.8 ? '#fcfcfc' : '#8c9cc8');
-    }
-    fillCircle(far, 400, 46, 16, '#f8f0c8');
-    fillCircle(far, 395, 42, 3, '#e0d8b0');
-    fillCircle(far, 406, 52, 2, '#e0d8b0');
-    for (let x = -30; x < BACKGROUND_LAYER_WIDTH + 40; x += 80) fillTriangle(far, x, 200, 160, 40 + Math.floor(randomSource() * 20), '#1c2448');
-    let x = 30;
-    while (x < BACKGROUND_LAYER_WIDTH) {
-      for (let step = 0; step < 44; step++) {
-        const width = 12 + Math.round(step * 0.12);
-        fillRectangle(near, x + 9 - width / 2, GROUND_SURFACE_Y - step, width, 1, '#b8b8cc');
-      }
-      fillTriangle(near, x - 1, GROUND_SURFACE_Y - 44, 20, 12, '#2c2c44');
-      fillRectangle(near, x + 6, GROUND_SURFACE_Y - 12, 5, 12, '#2c2c44');
-      const hubX = x + 9;
-      const hubY = GROUND_SURFACE_Y - 40;
-      for (let length = 0; length < 22; length++) {
-        const offset = length * 0.7;
-        for (const [signX, signY] of [[1, -1], [-1, 1], [1, 1], [-1, -1]]) fillRectangle(near, hubX + offset * signX, hubY + offset * signY, 2, 2, '#1c1c2c');
-      }
-      x += 120 + Math.floor(randomSource() * 60);
-    }
-  },
-
-  /** Canarias: el mar, el Teide humeante y dragos. */
-  canarias(far, near, randomSource) {
-    fillRectangle(far, 0, 186, BACKGROUND_LAYER_WIDTH, 60, '#2c5c9c');
-    for (let x = 0; x < BACKGROUND_LAYER_WIDTH; x += 14) fillRectangle(far, x, 190 + (x % 3) * 5, 6, 1, '#5c8cc8');
-    for (let step = 0; step < 130; step++) {
-      const width = 20 + step * 3;
-      fillRectangle(far, 256 - width / 2, 56 + step, width, 1, step < 18 ? '#e8e0e0' : '#6c3c2c');
-    }
-    fillRectangle(far, 246, 52, 20, 6, '#fc6c20');
-    for (let puff = 0; puff < 6; puff++) fillCircle(far, 250 + puff * 6 + Math.round(randomSource() * 6), 40 - puff * 7, 4 + puff, '#9c8c8c');
-    for (let x = -20; x < BACKGROUND_LAYER_WIDTH + 20; x += 60) fillTriangle(far, x, 190, 90, 24, '#4c2c24');
-    let x = 30;
-    while (x < BACKGROUND_LAYER_WIDTH) {
-      fillRectangle(near, x + 10, 170, 8, 38, '#8c7c6c');
-      for (let branch = -2; branch <= 2; branch++) {
-        fillRectangle(near, x + 13 + branch * 6, 158, 2, 14, '#8c7c6c');
-        fillCircle(near, x + 14 + branch * 7, 152, 7, '#3c7c3c');
-      }
-      fillRectangle(near, x - 6, 196, 40, 12, '#201c24');
-      x += 100 + Math.floor(randomSource() * 60);
-    }
-  },
-
-  /** Castillo de Hacienda: muro de piedra con estandartes de impuestos y rejas. */
-  hacienda(far, near) {
-    fillRectangle(far, 0, 0, BACKGROUND_LAYER_WIDTH, SCREEN_HEIGHT, '#241c2c');
-    for (let y = 32; y < SCREEN_HEIGHT; y += 8) {
-      for (let x = (y / 8) % 2 ? 0 : 8; x < BACKGROUND_LAYER_WIDTH; x += 16) {
-        fillRectangle(far, x, y, 15, 7, '#2c2434');
-        fillRectangle(far, x, y, 15, 1, '#342c3c');
-      }
-    }
-    ['IVA', 'IRPF', '21%', 'IBI'].forEach((taxName, index) => {
-      const bannerX = index * 128 + 40;
-      fillRectangle(far, bannerX, 50, 32, 60, '#8c1c1c');
-      fillRectangle(far, bannerX + 2, 52, 28, 56, '#b82828');
-      fillTriangle(far, bannerX, 124, 32, 14, '#8c1c1c');
-      fillRectangle(far, bannerX - 4, 46, 40, 4, '#c8a040');
-      drawText(far, taxName, bannerX + 16, 70, '#fcd800', { align: 'center' });
+  galicia({ far, mid, near }, random, { skyHorizon }) {
+    // Colinas en capas entre la niebla.
+    const greens = ['#8aa898', '#6f9482', '#527a68'];
+    greens.forEach((color, index) => {
+      ridge(far, { baseY: GY - 78 + index * 22, amplitude: 24 - index * 4, periods: 2 + index, phase: index * 1.7, fill: linearGradient(far, 0, GY - 110 + index * 22, 0, GY, [[0, mix(color, skyHorizon, 0.45 - index * 0.1)], [1, mix(color, skyHorizon, 0.75)]]) });
+      haze(far, GY - 100 + index * 22, GY - 30 + index * 22, skyHorizon, 0, 0.35);
     });
-    for (let x = 100; x < BACKGROUND_LAYER_WIDTH; x += 128) {
-      fillRectangle(far, x, 120, 20, 30, '#100c14');
-      for (let bar = 2; bar < 20; bar += 5) fillRectangle(far, x + bar, 120, 2, 30, '#5c5464');
+    // Faro.
+    wrapDraw(far, 410, 20, x => {
+      polygon(far, [[x, GY - 28], [x + 12, GY - 28], [x + 10, GY - 92], [x + 2, GY - 92]], mix('#e8e6e2', skyHorizon, 0.3));
+      far.fillStyle = mix('#d02828', skyHorizon, 0.25); far.fillRect(x + 2.6, GY - 60, 7, 8); far.fillRect(x + 2, GY - 80, 8, 6);
+      far.fillStyle = mix('#3a3a44', skyHorizon, 0.3); far.fillRect(x + 1.5, GY - 100, 9, 8);
+      glow(far, x + 6, GY - 96, 30, '#fff2b0', 0.5);
+    });
+    // Intermedio: eucaliptos altos entre la bruma.
+    for (let x = 10; x < W; x += 52) {
+      wrapDraw(mid, x, 20, px => {
+        const h = 90 + random() * 40;
+        mid.fillStyle = mix('#8a7864', skyHorizon, 0.35); mid.fillRect(px, GY - h, 2.6, h);
+        for (const [dx, dy, r] of [[0, 0, 12], [-6, 18, 9], [7, 24, 10], [0, 36, 8]]) {
+          mid.beginPath(); mid.ellipse(px + dx + 1, GY - h + dy, r * 0.8, r * 1.4, 0, 0, TAU);
+          mid.fillStyle = linearGradient(mid, 0, GY - h + dy - r, 0, GY - h + dy + r, [[0, mix('#5e9a74', skyHorizon, 0.3)], [1, mix('#2f6a4a', skyHorizon, 0.3)]]); mid.fill();
+        }
+      });
     }
-    for (let x = 30; x < BACKGROUND_LAYER_WIDTH; x += 128) {
-      fillRectangle(near, x, 140, 4, 14, '#5c3c24');
-      fillRectangle(near, x - 2, 136, 8, 4, '#3c2c1c');
+    haze(mid, GY - 70, GY, skyHorizon, 0, 0.5);
+    // Cercano: hórreos de piedra sobre pilares y muros con musgo.
+    for (let x = 14; x < W; x += 150) {
+      wrapDraw(near, x, 70, px => {
+        for (const pillarX of [px + 4, px + 40]) { near.fillStyle = '#8a8a90'; near.fillRect(pillarX, GY - 18, 5, 18); near.fillStyle = '#b8b8c0'; near.fillRect(pillarX - 2, GY - 20, 9, 3); near.fillStyle = 'rgba(255,255,255,0.2)'; near.fillRect(pillarX, GY - 18, 1.2, 18); }
+        near.fillStyle = linearGradient(near, px, 0, px + 50, 0, [[0, '#a89576'], [1, '#7a6a52']]); near.fillRect(px + 1, GY - 52, 48, 32);
+        near.strokeStyle = '#4a3a28'; near.lineWidth = 0.9; near.strokeRect(px + 1, GY - 52, 48, 32);
+        near.strokeStyle = 'rgba(40,28,16,0.55)'; near.lineWidth = 0.6;
+        for (let s = px + 6; s < px + 48; s += 5) { near.beginPath(); near.moveTo(s, GY - 50); near.lineTo(s, GY - 22); near.stroke(); }
+        polygon(near, [[px - 5, GY - 52], [px + 55, GY - 52], [px + 25, GY - 72]], '#5e6270', -0.5);
+        near.fillStyle = '#3e424e'; near.fillRect(px + 24, GY - 82, 2, 12); near.fillRect(px + 20.6, GY - 79, 8.8, 2);
+      });
     }
+    for (let x = 90; x < W; x += 150) {
+      wrapDraw(near, x, 60, px => {
+        near.fillStyle = linearGradient(near, 0, GY - 22, 0, GY, [[0, '#8e8e92'], [1, '#5e5e66']]); near.fillRect(px, GY - 22, 58, 22);
+        for (let row = 0; row < 3; row++) for (let col = 0; col < 5; col++) { near.strokeStyle = 'rgba(30,30,40,0.45)'; near.lineWidth = 0.5; near.strokeRect(px + col * 12 + (row % 2) * 6, GY - 22 + row * 7.4, 12, 7.4); }
+        near.fillStyle = 'rgba(70,140,60,0.55)'; for (let m = 0; m < 9; m++) { near.beginPath(); near.arc(px + 4 + m * 6.4, GY - 22, 2.4 + (m % 3), Math.PI, 0); near.fill(); }
+      });
+    }
+    haze(near, GY - 50, GY, '#aebdc8', 0, 0.45);
+  },
+
+  valencia({ far, mid, near }, random, { skyHorizon }) {
+    const dusk = mix('#3a2a5a', skyHorizon, 0.18);
+    for (const building of layoutBuildings(random, { minWidth: 18, maxWidth: 30, minHeight: 40, maxHeight: 96 })) {
+      distantSilhouette(far, building.x, GY - building.height, building.width + 0.5, GY + 10, dusk, mix(skyHorizon, '#6a3a70', 0.4));
+      for (let y = GY - building.height + 5; y < GY - 6; y += 8) for (let x = building.x + 3; x < building.x + building.width - 3; x += 6) if (random() > 0.45) { far.fillStyle = 'rgba(255,214,120,0.85)'; far.fillRect(x, y, 2.2, 3); }
+    }
+    // Ciudad de las Artes: arco blanco y esfera ocular.
+    wrapDraw(far, 200, 120, x => {
+      far.fillStyle = linearGradient(far, x, 0, x + 100, 0, [[0, '#f4f2ff'], [1, '#a8a8d8']]);
+      far.beginPath(); far.moveTo(x, GY); far.quadraticCurveTo(x + 50, GY - 110, x + 100, GY); far.lineTo(x + 94, GY); far.quadraticCurveTo(x + 50, GY - 96, x + 6, GY); far.closePath(); far.fill();
+      far.fillStyle = 'rgba(120,120,190,0.8)'; far.beginPath(); far.ellipse(x + 50, GY - 20, 34, 12, 0, 0, TAU); far.fill();
+      far.fillStyle = '#e8e8ff'; far.beginPath(); far.ellipse(x + 50, GY - 24, 22, 7, 0, 0, TAU); far.fill();
+    });
+    haze(far, GY - 80, GY, '#d0686c', 0, 0.55);
+
+    // Intermedio: monumentos de falla lejanos con luces de colores.
+    for (let x = 20; x < W; x += 128) {
+      wrapDraw(mid, x, 60, px => {
+        mid.fillStyle = mix('#5a3a5c', skyHorizon, 0.25); mid.fillRect(px, GY - 40, 56, 40);
+        mid.beginPath(); mid.arc(px + 28, GY - 52, 22, 0, TAU); mid.fill();
+        polygon(mid, [[px + 18, GY - 70], [px + 38, GY - 70], [px + 28, GY - 96]], mix('#7a3a5c', skyHorizon, 0.2));
+        for (let l = 0; l < 7; l++) { const c = ['#ffd24a', '#ff5a8a', '#6adcff', '#ffffff'][l % 4]; mid.fillStyle = c; mid.beginPath(); mid.arc(px + 4 + l * 8, GY - 38 - (l % 2) * 6, 1.6, 0, TAU); mid.fill(); glow(mid, px + 4 + l * 8, GY - 38 - (l % 2) * 6, 8, c, 0.5); }
+      });
+    }
+    haze(mid, GY - 50, GY, '#6a2a58', 0, 0.45);
+
+    // Cercano: ninots de colores con contorno grueso.
+    for (let x = 22; x < W; x += 128) {
+      wrapDraw(near, x, 60, px => {
+        near.fillStyle = '#7a4a30'; roundedRect(near, px, GY - 20, 54, 22, 3); near.fill(); strokeSoft(near, '#7a4a30', 1, -0.6);
+        const clothes = pick(['#ff7aa8', '#6ad0ff', '#ffd45a', '#9af07a'], random);
+        near.fillStyle = linearGradient(near, px + 14, 0, px + 40, 0, [[0, shade(clothes, 0.18)], [1, shade(clothes, -0.2)]]);
+        roundedRect(near, px + 14, GY - 76, 26, 56, 8); near.fill(); strokeSoft(near, clothes, 1.1, -0.6);
+        for (const sx of [px + 4, px + 40]) { near.fillStyle = clothes; roundedRect(near, sx, GY - 66, 10, 30, 5); near.fill(); strokeSoft(near, clothes, 1, -0.6); near.fillStyle = '#ffd0b0'; near.beginPath(); near.arc(sx + 5, GY - 35, 4.6, 0, TAU); near.fill(); strokeSoft(near, '#ffd0b0', 0.8, -0.5); }
+        near.fillStyle = linearGradient(near, 0, GY - 112, 0, GY - 76, [[0, '#ffe0c4'], [1, '#f0b890']]);
+        near.beginPath(); near.arc(px + 27, GY - 92, 18, 0, TAU); near.fill(); strokeSoft(near, '#f0b890', 1.1, -0.55);
+        near.fillStyle = '#ff7a7a'; near.beginPath(); near.ellipse(px + 27, GY - 84, 7, 4.2, 0, 0, TAU); near.fill();
+        near.fillStyle = '#ffffff'; near.beginPath(); near.arc(px + 20, GY - 96, 4.4, 0, TAU); near.arc(px + 34, GY - 96, 4.4, 0, TAU); near.fill();
+        near.fillStyle = '#10101a'; near.beginPath(); near.arc(px + 21, GY - 95, 2, 0, TAU); near.arc(px + 33, GY - 95, 2, 0, TAU); near.fill();
+        near.fillStyle = '#2a2a38'; roundedRect(near, px + 10, GY - 108, 34, 7, 3); near.fill(); roundedRect(near, px + 17, GY - 124, 20, 18, 4); near.fill();
+      });
+    }
+    bunting(near, 0, GY - 120, 128, GY - 120, ['#ff7a3a', '#ffd24a', '#ff5a8a', '#6adcff'], 10);
+    bunting(near, 128, GY - 120, 256, GY - 120, ['#ff7a3a', '#ffd24a', '#ff5a8a', '#6adcff'], 10);
+    bunting(near, 256, GY - 120, 384, GY - 120, ['#ff7a3a', '#ffd24a', '#ff5a8a', '#6adcff'], 10);
+    bunting(near, 384, GY - 120, 512, GY - 120, ['#ff7a3a', '#ffd24a', '#ff5a8a', '#6adcff'], 10);
+    haze(near, GY - 24, GY, '#2a0e30', 0, 0.35);
+  },
+
+  mancha({ far, mid, near }, random) {
+    // Estrellas con brillo.
+    for (let s = 0; s < 150; s++) {
+      const x = random() * W; const y = random() * 150; const bright = random();
+      far.fillStyle = bright > 0.85 ? '#ffffff' : bright > 0.5 ? '#b8c8ff' : '#7a8ac0';
+      far.beginPath(); far.arc(x, y, bright > 0.85 ? 1 : 0.55, 0, TAU); far.fill();
+      if (bright > 0.93) glow(far, x, y, 7, '#cfe0ff', 0.5);
+    }
+    // Luna llena con cráteres y halo.
+    glow(far, 400, 54, 70, '#c8d4ff', 0.35);
+    far.fillStyle = linearGradient(far, 384, 38, 416, 70, [[0, '#fffbe4'], [1, '#e0d8a8']]);
+    far.beginPath(); far.arc(400, 54, 17, 0, TAU); far.fill();
+    far.fillStyle = 'rgba(160,150,110,0.45)';
+    for (const [dx, dy, r] of [[-5, -4, 3.2], [5, 3, 2.4], [-2, 7, 2], [6, -7, 1.6]]) { far.beginPath(); far.arc(400 + dx, 54 + dy, r, 0, TAU); far.fill(); }
+    ridge(far, { baseY: GY - 56, amplitude: 22, periods: 3, phase: 0.8, fill: linearGradient(far, 0, GY - 90, 0, GY, [[0, '#26306a'], [1, '#161c44']]), rim: 'rgba(160,180,255,0.35)' });
+    haze(far, GY - 80, GY, '#2a3a8a', 0, 0.45);
+    ridge(mid, { baseY: GY - 28, amplitude: 16, periods: 4, phase: 2.4, fill: linearGradient(mid, 0, GY - 60, 0, GY, [[0, '#1c2352'], [1, '#101533']]), rim: 'rgba(140,160,255,0.28)' });
+    // Molinos lejanos.
+    for (let x = 60; x < W; x += 170) {
+    wrapDraw(mid, x, 50, px => {
+      mid.fillStyle = '#12183a'; polygon(mid, [[px - 6, GY - 16], [px + 6, GY - 16], [px + 4, GY - 46], [px - 4, GY - 46]], '#12183a');
+      polygon(mid, [[px - 6, GY - 46], [px + 6, GY - 46], [px, GY - 56]], '#0c1030');
+      mid.strokeStyle = '#0c1030'; mid.lineWidth = 1.2; for (let b = 0; b < 4; b++) { const a = b * Math.PI / 2 + 0.5; mid.beginPath(); mid.moveTo(px, GY - 44); mid.lineTo(px + Math.cos(a) * 20, GY - 44 + Math.sin(a) * 20); mid.stroke(); }
+    });
+    }
+    haze(mid, GY - 40, GY, '#1c2460', 0, 0.4);
+    // Molinos cercanos con luz en la ventana y aspas.
+    for (let x = 40; x < W; x += 170) {
+      wrapDraw(near, x, 64, px => {
+        near.fillStyle = linearGradient(near, px - 14, 0, px + 14, 0, [[0, '#d8d8f0'], [0.6, '#9a9ac0'], [1, '#585888']]);
+        polygon(near, [[px - 14, GY], [px + 14, GY], [px + 9, GY - 64], [px - 9, GY - 64]], near.fillStyle);
+        near.strokeStyle = '#2c2c58'; near.lineWidth = 1; near.beginPath(); near.moveTo(px - 14, GY); near.lineTo(px - 9, GY - 64); near.lineTo(px + 9, GY - 64); near.lineTo(px + 14, GY); near.stroke();
+        near.fillStyle = '#2c2440'; polygon(near, [[px - 12, GY - 64], [px + 12, GY - 64], [px, GY - 80]], '#2c2440', -0.4);
+        near.fillStyle = '#ffd36a'; roundedRect(near, px - 2.6, GY - 44, 5.2, 7, 2.4); near.fill(); glow(near, px, GY - 41, 18, '#ffcf70', 0.5);
+        near.fillStyle = '#3a2418'; roundedRect(near, px - 3.4, GY - 16, 6.8, 16, 3); near.fill();
+        const hubY = GY - 62;
+        near.lineCap = 'round';
+        for (let b = 0; b < 4; b++) {
+          const a = b * Math.PI / 2 + 0.6;
+          const bx = px + Math.cos(a) * 30; const by = hubY + Math.sin(a) * 30;
+          near.strokeStyle = '#3a2a1c'; near.lineWidth = 1.6; near.beginPath(); near.moveTo(px, hubY); near.lineTo(bx, by); near.stroke();
+          const nx = -Math.sin(a) * 6; const ny = Math.cos(a) * 6;
+          near.fillStyle = 'rgba(210,200,170,0.85)'; near.beginPath(); near.moveTo(px + Math.cos(a) * 8, hubY + Math.sin(a) * 8); near.lineTo(bx, by); near.lineTo(bx + nx, by + ny); near.lineTo(px + Math.cos(a) * 8 + nx, hubY + Math.sin(a) * 8 + ny); near.closePath(); near.fill();
+          strokeSoft(near, '#a09878', 0.6, -0.6);
+        }
+        near.fillStyle = '#2a1c14'; near.beginPath(); near.arc(px, hubY, 2.6, 0, TAU); near.fill();
+      });
+    }
+    haze(near, GY - 30, GY, '#080a20', 0, 0.45);
+  },
+
+  canarias({ far, mid, near }, random, { skyHorizon }) {
+    // Mar rojizo al atardecer y el Teide humeante.
+    far.fillStyle = linearGradient(far, 0, GY - 38, 0, GY + 4, [[0, mix('#3a5a9c', skyHorizon, 0.45)], [1, '#1c3a78']]);
+    far.fillRect(0, GY - 38, W, 46);
+    seaSparkles(far, random, GY - 36, GY - 2, '#ffd2a0', 70);
+    wrapDraw(far, 200, 220, x => {
+      const grad = linearGradient(far, 0, GY - 150, 0, GY - 30, [[0, '#f2e6e2'], [0.14, '#f2e6e2'], [0.2, '#8a4a36'], [1, '#4a281e']]);
+      polygon(far, [[x, GY - 36], [x + 100, GY - 150], [x + 104, GY - 150], [x + 200, GY - 36]], grad);
+      far.fillStyle = '#ff7a30'; far.fillRect(x + 94, GY - 154, 16, 5); glow(far, x + 102, GY - 154, 30, '#ff8a30', 0.7);
+      for (let puff = 0; puff < 7; puff++) { far.fillStyle = `rgba(160,140,140,${0.5 - puff * 0.05})`; far.beginPath(); far.arc(x + 102 + puff * 7, GY - 164 - puff * 9, 5 + puff * 1.4, 0, TAU); far.fill(); }
+    });
+    haze(far, GY - 70, GY, skyHorizon, 0, 0.55);
+    ridge(mid, { baseY: GY - 24, amplitude: 22, periods: 3, phase: 0.2, fill: linearGradient(mid, 0, GY - 50, 0, GY, [[0, mix('#5a2e28', skyHorizon, 0.3)], [1, '#2a1612']]), sharpness: 0.5, rim: 'rgba(255,170,100,0.4)' });
+    haze(mid, GY - 40, GY, '#e86040', 0, 0.35);
+    // Dragos (árboles) en silueta con brillo de lava abajo.
+    for (let x = 46; x < W; x += 128) {
+      wrapDraw(near, x, 64, px => {
+        near.fillStyle = '#2c2430';
+        polygon(near, [[px - 5, GY], [px + 5, GY], [px + 3, GY - 40], [px - 3, GY - 40]], '#2c2430');
+        for (let branch = -3; branch <= 3; branch++) {
+          const bx = px + branch * 9; const by = GY - 56 - Math.abs(branch) * -3 - (3 - Math.abs(branch)) * 3;
+          near.strokeStyle = '#2c2430'; near.lineWidth = 2.2; near.beginPath(); near.moveTo(px, GY - 38); near.quadraticCurveTo(px + branch * 4, GY - 54, bx, by); near.stroke();
+          near.fillStyle = linearGradient(near, 0, by - 10, 0, by + 8, [[0, '#4a9a50'], [1, '#1e5a34']]);
+          for (let leaf = 0; leaf < 7; leaf++) { const a = -Math.PI * (leaf / 6); near.beginPath(); near.moveTo(bx, by); near.quadraticCurveTo(bx + Math.cos(a) * 6, by + Math.sin(a) * 8 - 3, bx + Math.cos(a) * 11, by + Math.sin(a) * 6 + 4); near.quadraticCurveTo(bx + Math.cos(a) * 5, by - 1, bx, by); near.fill(); }
+        }
+        glow(near, px, GY, 36, '#ff6a20', 0.45);
+      });
+    }
+    near.fillStyle = '#1c1418'; ridge(near, { baseY: GY - 6, amplitude: 4, periods: 9, phase: 0, fill: '#1c1418', rim: 'rgba(255,120,60,0.5)' });
+    haze(near, GY - 24, GY, '#ff5a20', 0, 0.28);
+  },
+
+  hacienda({ far, mid, near }, random) {
+    // Muro de sillares de piedra oscura.
+    far.fillStyle = linearGradient(far, 0, 0, 0, 240, [[0, '#14101c'], [1, '#2a2236']]);
+    far.fillRect(0, 0, W, 240);
+    for (let y = 30; y < GY + 6; y += 9) {
+      for (let x = (Math.floor(y / 9) % 2) ? -8 : 0; x < W + 16; x += 22) {
+        const tone = 0.04 + ((x * 7 + y * 13) % 11) / 160;
+        far.fillStyle = mix('#2a2236', '#4a4058', tone * 3);
+        roundedRect(far, x + 0.6, y + 0.6, 20.8, 7.8, 1.2); far.fill();
+        far.fillStyle = 'rgba(255,255,255,0.05)'; far.fillRect(x + 1.4, y + 1, 19, 1.2);
+      }
+    }
+    // Ventanales enrejados con luz azulada.
+    for (let x = 60; x < W; x += 128) {
+      mid.fillStyle = '#080610'; mid.beginPath(); mid.moveTo(x, 140); mid.lineTo(x, 90); mid.arc(x + 16, 90, 16, Math.PI, 0); mid.lineTo(x + 32, 140); mid.closePath(); mid.fill();
+      glow(mid, x + 16, 100, 34, '#6a7ad8', 0.35);
+      mid.strokeStyle = '#6a627a'; mid.lineWidth = 1.2; for (let bar = 5; bar < 32; bar += 7) { mid.beginPath(); mid.moveTo(x + bar, 76); mid.lineTo(x + bar, 140); mid.stroke(); }
+      strokeSoft(mid, '#5a5068', 2, 0.1);
+    }
+    // Estandartes de impuestos.
+    ['IVA', 'IRPF', '21%', 'IBI'].forEach((name, index) => {
+      const bx = index * 128 + 22;
+      near.fillStyle = '#c8a040'; roundedRect(near, bx - 5, 42, 46, 5, 2); near.fill();
+      near.fillStyle = linearGradient(near, bx, 0, bx + 36, 0, [[0, '#c42a2a'], [1, '#7a1414']]);
+      polygon(near, [[bx, 47], [bx + 36, 47], [bx + 36, 118], [bx + 18, 106], [bx, 118]], near.fillStyle, -0.5);
+      near.strokeStyle = '#e8c860'; near.lineWidth = 1; near.strokeRect(bx + 3, 51, 30, 52);
+      drawText(near, name, bx + 18, 70, '#ffd84a', { align: 'center', shadowColor: '#3a0808' });
+    });
+    // Antorchas con llama y halo (la llama parpadea en directo).
+    for (let x = 0; x < W; x += 128) {
+      near.fillStyle = '#4a3220'; near.fillRect(x + 100, 128, 3, 18);
+      near.fillStyle = '#6a625a'; near.fillRect(x + 97, 124, 9, 5);
+    }
+    haze(near, GY - 40, GY, '#05030a', 0, 0.55);
   }
 };
+return { CITY_PAINTERS };
+})();
+
+// ─── src/graphics/backgroundImages.js ───
+const __module_src_graphics_backgroundImages_js = (() => {
+/**
+ * @file Fondos con efecto parallax para cada ciudad, en alta resolución.
+ *
+ * Cada fondo tiene cuatro partes:
+ *   - `sky`: el cielo con su degradado, el sol o las estrellas (no se mueve).
+ *   - `farLayer`, `midLayer`, `nearLayer`: tres capas de paisaje que se
+ *     desplazan a distinta velocidad (más lejos = más despacio).
+ * Las capas miden 512 píxeles lógicos de ancho y se repiten en horizontal;
+ * se pintan con RENDER_SCALE veces más píxeles para que salgan nítidas.
+ * Los dibujos de cada ciudad están en `cityBackgrounds.js`.
+ */
+const { SCREEN_WIDTH, SCREEN_HEIGHT, RENDER_SCALE } = __module_src_config_constants_js;
+const { createCanvas } = __module_src_core_canvas_js;
+const { createSeededRandom } = __module_src_core_math_js;
+const { BACKGROUND_LAYER_WIDTH } = __module_src_graphics_backgroundConstants_js;
+const { CITY_PAINTERS } = __module_src_graphics_cityBackgrounds_js;
+const { linearGradient, glow, mix, shade, softCloud, TAU } = __module_src_graphics_backgroundKit_js;
+
+/** Crea una capa transparente cuyo contexto ya está ampliado. */
+function createLayer() {
+  const canvas = createCanvas(BACKGROUND_LAYER_WIDTH * RENDER_SCALE, SCREEN_HEIGHT * RENDER_SCALE);
+  const context = canvas.getContext('2d');
+  context.scale(RENDER_SCALE, RENDER_SCALE);
+  context.imageSmoothingEnabled = true;
+  return { canvas, context };
+}
+
+/** Pinta el cielo: degradado de tres tonos, resplandor del horizonte, sol o estrellas. */
+function paintSky(context, theme, random) {
+  const [topSky, middleSky, lowSky] = theme.skyColors;
+  context.fillStyle = linearGradient(context, 0, 0, 0, SCREEN_HEIGHT, [
+    [0, shade(topSky, -0.1)], [0.4, middleSky], [0.8, lowSky], [1, shade(lowSky, 0.12)]
+  ]);
+  context.fillRect(0, 0, SCREEN_WIDTH, SCREEN_HEIGHT);
+  if (theme.isNight) {
+    for (let star = 0; star < 90; star++) {
+      const x = random() * SCREEN_WIDTH;
+      const y = random() * SCREEN_HEIGHT * 0.6;
+      context.fillStyle = random() > 0.8 ? '#ffffff' : '#9aaadc';
+      context.beginPath(); context.arc(x, y, random() > 0.85 ? 0.9 : 0.5, 0, TAU); context.fill();
+    }
+  }
+  if (theme.sun) {
+    const { x, y, radius, color } = theme.sun;
+    glow(context, x, y, radius * 7, color, 0.5);
+    glow(context, x, y, radius * 3, '#ffffff', 0.35);
+    context.fillStyle = linearGradient(context, 0, y - radius, 0, y + radius, [[0, '#ffffff'], [1, color]]);
+    context.beginPath(); context.arc(x, y, radius, 0, TAU); context.fill();
+  }
+  // Brillo cálido en el horizonte.
+  context.fillStyle = linearGradient(context, 0, SCREEN_HEIGHT * 0.55, 0, SCREEN_HEIGHT * 0.9, [[0, 'rgba(255,255,255,0)'], [1, 'rgba(255,240,220,0.18)']]);
+  context.fillRect(0, SCREEN_HEIGHT * 0.55, SCREEN_WIDTH, SCREEN_HEIGHT * 0.35);
+}
+
+/** Capa de nubes suaves, con sombra azulada abajo y luz arriba. */
+function createCloudLayer(theme, random) {
+  const layer = createLayer();
+  const horizon = theme.skyColors[2];
+  const count = 7;
+  for (let index = 0; index < count; index++) {
+    const x = (index + random() * 0.6) * (BACKGROUND_LAYER_WIDTH / count);
+    const y = 24 + random() * 92;
+    const scale = 0.8 + random() * 0.9;
+    for (const offset of [-BACKGROUND_LAYER_WIDTH, 0, BACKGROUND_LAYER_WIDTH]) {
+      softCloud(layer.context, x + offset, y, scale, { top: '#ffffff', bottom: mix('#cfe0f6', horizon, 0.35), opacity: 0.92 });
+    }
+  }
+  return layer.canvas;
+}
 
 /**
  * @typedef {Object} BackgroundImages
- * @property {HTMLCanvasElement} sky Columna con las franjas del cielo.
+ * @property {HTMLCanvasElement} sky Cielo del tamaño de la pantalla (alta resolución).
+ * @property {HTMLCanvasElement|null} cloudLayer Nubes que se desplazan despacio (null si el tema no tiene).
  * @property {HTMLCanvasElement} farLayer
+ * @property {HTMLCanvasElement} midLayer
  * @property {HTMLCanvasElement} nearLayer
  */
 
@@ -4495,19 +6028,18 @@ const CITY_BACKGROUND_PAINTERS = {
  * @returns {BackgroundImages}
  */
 function createBackgroundImages(theme) {
-  const randomSource = createSeededRandom(theme.name.length * 131 + 17);
-  const farLayer = createCanvas(BACKGROUND_LAYER_WIDTH, SCREEN_HEIGHT);
-  const nearLayer = createCanvas(BACKGROUND_LAYER_WIDTH, SCREEN_HEIGHT);
-  CITY_BACKGROUND_PAINTERS[theme.name](farLayer.getContext('2d'), nearLayer.getContext('2d'), randomSource);
-  const [topSky, middleSky, lowSky] = theme.skyColors;
-  const sky = createCanvas(1, SCREEN_HEIGHT, context => {
-    fillRectangle(context, 0, 0, 1, 120, topSky);
-    fillRectangle(context, 0, 120, 1, 50, middleSky);
-    fillRectangle(context, 0, 170, 1, 70, lowSky);
+  const random = createSeededRandom(theme.name.length * 131 + 17);
+  const far = createLayer();
+  const mid = createLayer();
+  const near = createLayer();
+  CITY_PAINTERS[theme.name]({ far: far.context, mid: mid.context, near: near.context }, random, { skyHorizon: theme.skyColors[2], theme });
+  const sky = createCanvas(SCREEN_WIDTH * RENDER_SCALE, SCREEN_HEIGHT * RENDER_SCALE, context => {
+    context.scale(RENDER_SCALE, RENDER_SCALE);
+    paintSky(context, theme, random);
   });
-  return { sky, farLayer, nearLayer };
+  return { sky, cloudLayer: theme.hasClouds ? createCloudLayer(theme, random) : null, farLayer: far.canvas, midLayer: mid.canvas, nearLayer: near.canvas };
 }
-return { BACKGROUND_LAYER_WIDTH, PARALLAX_FACTORS, createBackgroundImages };
+return { createBackgroundImages };
 })();
 
 // ─── src/graphics/themeAssets.js ───
@@ -5002,6 +6534,7 @@ const { randomBetween } = __module_src_core_math_js;
 const { soundEngine, SOUND_EFFECT } = __module_src_audio_soundEngine_js;
 const { SPRITES, drawSprite } = __module_src_graphics_sprites_js;
 const { pacoSpriteName } = __module_src_graphics_spriteData_js;
+const { screenFx } = __module_src_graphics_screenFx_js;
 const { TILE } = __module_src_world_tileTypes_js;
 const { GAMEPLAY_MESSAGES } = __module_src_world_texts_js;
 const { moveHorizontally, moveVertically, isAreaFree, pixelToTile } = __module_src_world_tileCollision_js;
@@ -5038,6 +6571,12 @@ class Player extends Entity {
     this.jumpBufferStepsLeft = 0;
     /** Avanza al caminar para alternar los fotogramas de las piernas. */
     this.walkAnimationProgress = 0;
+    /** Aplastamiento al aterrizar (0 = normal); se recupera solo con el tiempo. */
+    this.landingSquash = 0;
+    /** Estiramiento al despegar (0 = normal). */
+    this.takeOffStretch = 0;
+    /** Últimas posiciones, para dibujar la estela al correr. */
+    this.trail = [];
     this.isCrouching = false;
     /** Plataforma móvil sobre la que está de pie (o null). */
     this.ridingPlatform = null;
@@ -5123,7 +6662,10 @@ class Player extends Entity {
     this.updateHorizontalSpeed(controls);
     this.updateJumpAndGravity(controls);
     this.tryThrowFireball(controls, world);
+    const wasOnGround = this.isOnGround;
+    const fallSpeed = this.velocityY;
     this.moveAndCollide(world);
+    this.updateVisualFeedback(world, wasOnGround, fallSpeed);
     if (this.isDead) return;
 
     if (this.isOnGround && Math.abs(this.velocityX) > 0.1) this.walkAnimationProgress += Math.abs(this.velocityX) * 0.13;
@@ -5315,13 +6857,49 @@ class Player extends Entity {
     return false;
   }
 
+  /**
+   * @private
+   * Efectos puramente visuales: aplastamiento al caer, estiramiento al saltar,
+   * polvo, estela al correr y el temblor de los aterrizajes fuertes.
+   */
+  updateVisualFeedback(world, wasOnGround, fallSpeed) {
+    this.landingSquash *= 0.82;
+    this.takeOffStretch *= 0.85;
+    if (!wasOnGround && this.isOnGround && fallSpeed > 1.5) {
+      this.landingSquash = Math.min(0.42, fallSpeed * 0.06);
+      for (let puff = 0; puff < 4; puff++) world.spawnDust(this.centerX + (puff - 1.5) * 3, this.bottom - 1);
+      if (fallSpeed > 5.2) screenFx.shake(0.8, 6);
+    }
+    if (wasOnGround && !this.isOnGround && this.velocityY < -2) {
+      this.takeOffStretch = 0.2;
+      world.spawnDust(this.centerX, this.bottom - 1);
+    }
+    // Estela: solo cuando va rápido.
+    const isFast = Math.abs(this.velocityX) > 2.3 || this.isInvincible;
+    if (isFast && this.ageInSteps % 2 === 0) {
+      this.trail.push({ x: this.centerX, bottom: this.bottom, facing: this.facing, life: 9 });
+    }
+    for (const ghost of this.trail) ghost.life--;
+    this.trail = this.trail.filter(ghost => ghost.life > 0);
+    // Polvo al derrapar o al arrancar a correr.
+    if (this.isOnGround && Math.abs(this.velocityX) > 1.0 && this.velocityX * this.facing < -0.6 && this.ageInSteps % 3 === 0) {
+      world.spawnDust(this.centerX - this.facing * 4, this.bottom - 1);
+    }
+  }
+
   /** @private Elige la postura según lo que esté haciendo. */
   choosePose(isDrawnBig) {
     if (this.isDead) return 'dead';
-    if (this.isHoldingGoalPole || !this.isOnGround) return 'jump';
+    if (this.isHoldingGoalPole) return 'pole';
+    if (!this.isOnGround) return this.velocityY < 0.4 ? 'jumpUp' : 'jumpDown';
     if (this.isCrouching && isDrawnBig) return 'crouch';
-    if (Math.abs(this.velocityX) > 0.1) return Math.floor(this.walkAnimationProgress) % 2 ? 'walk2' : 'walk1';
-    return 'stand';
+    const speed = Math.abs(this.velocityX);
+    if (speed > 1.0 && this.velocityX * this.facing < -0.6) return 'skid';
+    if (speed > 0.1) {
+      const frame = (Math.floor(this.walkAnimationProgress * 2) % 8) + 1;
+      return `${speed > 2.0 ? 'run' : 'walk'}${frame}`;
+    }
+    return Math.floor(this.ageInSteps / 28) % 2 ? 'stand2' : 'stand';
   }
 
   /** @private Elige los colores: parpadeo de churros, verde picante o normal. */
@@ -5342,8 +6920,18 @@ class Player extends Entity {
     let isDrawnBig = this.isBig && !this.isDead;
     if (this.growAnimationSteps > 0) isDrawnBig = (this.growAnimationSteps >> 2) % 2 === 0;
     const size = isDrawnBig ? 'big' : 'small';
-    const sprite = SPRITES[pacoSpriteName(size, this.choosePose(isDrawnBig), this.chooseColorVariant())];
-    drawSprite(context, sprite, this.centerX - 8 - cameraX, this.bottom - sprite.height, { mirrored: this.facing < 0 });
+    const variant = this.chooseColorVariant();
+    const sprite = SPRITES[pacoSpriteName(size, this.choosePose(isDrawnBig), variant)];
+    const stretch = this.takeOffStretch + Math.min(0.14, Math.abs(this.velocityY) * 0.018) * (this.isOnGround ? 0 : 1);
+    const squash = this.landingSquash;
+    const scaleY = 1 + stretch - squash * 0.9;
+    const scaleX = 1 - stretch * 0.6 + squash * 0.7;
+
+    // Estela de imágenes fantasma al correr rápido.
+    for (const ghost of this.trail) {
+      drawSprite(context, sprite, ghost.x - 8 - cameraX, ghost.bottom - sprite.height, { mirrored: ghost.facing < 0, alpha: ghost.life / 26 });
+    }
+    drawSprite(context, sprite, this.centerX - 8 - cameraX, this.bottom - sprite.height, { mirrored: this.facing < 0, scaleX, scaleY });
   }
 }
 return { POWER_LEVEL, Player };
@@ -7839,13 +9427,14 @@ const __module_src_game_worldRenderer_js = (() => {
  *   cielo → fondo lejano → fuegos artificiales → fondo cercano → decorados →
  *   entidades "detrás" → baldosas → plataformas → entidades → Paco → efectos → lluvia → marcador.
  */
-const { SCREEN_WIDTH, SCREEN_HEIGHT, TILE_SIZE, GROUND_SURFACE_Y, GROUND_TOP_ROW } = __module_src_config_constants_js;
+const { SCREEN_WIDTH, SCREEN_HEIGHT, TILE_SIZE, GROUND_SURFACE_Y, GROUND_TOP_ROW, RENDER_SCALE } = __module_src_config_constants_js;
+const { OUTLINE_COLOR } = __module_src_graphics_hd_js;
 const { fillRectangle, fillCircle, fillTriangle } = __module_src_core_canvas_js;
 const { SPRITES, drawSprite } = __module_src_graphics_sprites_js;
 const { drawText, measureTextWidth } = __module_src_graphics_font_js;
-const { BACKGROUND_LAYER_WIDTH, PARALLAX_FACTORS } = __module_src_graphics_backgroundImages_js;
+const { BACKGROUND_LAYER_WIDTH, PARALLAX_FACTORS } = __module_src_graphics_backgroundConstants_js;
 const { TILE_ANIMATION_FRAMES } = __module_src_graphics_tileImages_js;
-const { getCloudImage, getGroundDecorationImage, getBarImage, BAR_SIZE } = __module_src_graphics_decorationImages_js;
+const { getGroundDecorationImage, getBarImage, BAR_SIZE } = __module_src_graphics_decorationImages_js;
 const { TILE, isSolidTile } = __module_src_world_tileTypes_js;
 const { GOAL_POLE_TOP_ROW } = __module_src_world_LevelBuilder_js;
 const { HAM_START_Y } = __module_src_game_GoalSequence_js;
@@ -7862,32 +9451,34 @@ const STANDING_ROW = GROUND_TOP_ROW - 1;
 /**
  * Dibuja una capa del fondo repetida en horizontal con desplazamiento parallax.
  * @param {CanvasRenderingContext2D} context Dónde dibujar.
- * @param {HTMLCanvasElement} layerImage
+ * @param {HTMLCanvasElement} layerImage Capa en alta resolución.
  * @param {number} cameraX
  * @param {number} parallaxFactor
  */
 function drawRepeatingLayer(context, layerImage, cameraX, parallaxFactor) {
-  const offset = -Math.floor((cameraX * parallaxFactor) % BACKGROUND_LAYER_WIDTH);
-  context.drawImage(layerImage, offset, 0);
-  context.drawImage(layerImage, offset + BACKGROUND_LAYER_WIDTH, 0);
+  const offset = -Math.floor(((cameraX * parallaxFactor) % BACKGROUND_LAYER_WIDTH) * RENDER_SCALE) / RENDER_SCALE;
+  context.drawImage(layerImage, offset, 0, BACKGROUND_LAYER_WIDTH, SCREEN_HEIGHT);
+  context.drawImage(layerImage, offset + BACKGROUND_LAYER_WIDTH, 0, BACKGROUND_LAYER_WIDTH, SCREEN_HEIGHT);
 }
 
 /**
- * Dibuja el cielo, el sol (si lo hay), las dos capas del fondo y los fuegos artificiales.
+ * Dibuja el cielo, las tres capas del fondo y los fuegos artificiales.
  * @param {CanvasRenderingContext2D} context Dónde dibujar.
  * @param {import('../graphics/backgroundImages.js').BackgroundImages} backgroundImages
  * @param {import('../world/themes.js').Theme} theme
  * @param {number} cameraX
  * @param {Array<{x:number,y:number,color:string,ageInSteps:number}>} [fireworkParticles]
  */
-function drawBackground(context, backgroundImages, theme, cameraX, fireworkParticles = []) {
+function drawBackground(context, backgroundImages, theme, cameraX, fireworkParticles = [], stepCounter = 0) {
   context.drawImage(backgroundImages.sky, 0, 0, SCREEN_WIDTH, SCREEN_HEIGHT);
-  if (theme.sun) fillCircle(context, theme.sun.x, theme.sun.y, theme.sun.radius, theme.sun.color);
+  // Las nubes avanzan solas despacio, además del parallax con la cámara.
+  if (backgroundImages.cloudLayer) drawRepeatingLayer(context, backgroundImages.cloudLayer, cameraX * 0.5 + stepCounter * 0.15, PARALLAX_FACTORS.farLayer * 0.6);
   drawRepeatingLayer(context, backgroundImages.farLayer, cameraX, PARALLAX_FACTORS.farLayer);
   for (const particle of fireworkParticles) {
     const isFadingOut = particle.ageInSteps >= 30 && particle.ageInSteps % 4 >= 2;
     fillRectangle(context, particle.x, particle.y, 2, 2, isFadingOut ? '#fcfcfc' : particle.color);
   }
+  drawRepeatingLayer(context, backgroundImages.midLayer, cameraX, PARALLAX_FACTORS.midLayer);
   drawRepeatingLayer(context, backgroundImages.nearLayer, cameraX, PARALLAX_FACTORS.nearLayer);
 }
 
@@ -7940,9 +9531,37 @@ function drawTileLayer(context, { tileMap, tileImages, theme, blockBumpOffsets, 
         continue;
       }
       const image = chooseTileImage(tile, { tileMap, tileImages, theme, column, row, pingPongFrame, liquidFrame });
-      if (image) context.drawImage(image, screenX, screenY);
+      if (image) context.drawImage(image, screenX, screenY, TILE_SIZE, TILE_SIZE);
+      if (tile === TILE.GROUND) drawGroundOutline(context, tileMap, column, row, screenX, screenY);
+      else if (tile === TILE.QUESTION_BLOCK) drawBlockGlow(context, screenX, screenY, stepCounter, column);
     }
   }
+}
+
+/** Grosor (en píxeles lógicos) del contorno oscuro del terreno. */
+const OUTLINE_WIDTH = 2 / RENDER_SCALE * 1.5;
+
+/** Contorno oscuro en los bordes del suelo que dan al aire (arriba, huecos laterales). */
+function drawGroundOutline(context, tileMap, column, row, screenX, screenY) {
+  const isOpen = (c, r) => r >= 0 && r < tileMap.heightInTiles && c >= 0 && c < tileMap.widthInTiles && !isSolidTile(tileMap.getTile(c, r));
+  context.fillStyle = OUTLINE_COLOR;
+  if (row > 0 && isOpen(column, row - 1)) context.fillRect(screenX, screenY - OUTLINE_WIDTH * 0.6, TILE_SIZE, OUTLINE_WIDTH * 1.2);
+  if (isOpen(column - 1, row)) context.fillRect(screenX, screenY, OUTLINE_WIDTH, TILE_SIZE);
+  if (isOpen(column + 1, row)) context.fillRect(screenX + TILE_SIZE - OUTLINE_WIDTH, screenY, OUTLINE_WIDTH, TILE_SIZE);
+  if (isOpen(column, row + 1)) context.fillRect(screenX, screenY + TILE_SIZE - OUTLINE_WIDTH, TILE_SIZE, OUTLINE_WIDTH);
+}
+
+/** Resplandor pulsante alrededor de los bloques "¿?". */
+function drawBlockGlow(context, screenX, screenY, stepCounter, column) {
+  const pulse = 0.5 + 0.5 * Math.sin(stepCounter / 14 + column);
+  context.save();
+  context.globalCompositeOperation = 'lighter';
+  const gradient = context.createRadialGradient(screenX + 8, screenY + 8, 2, screenX + 8, screenY + 8, 20);
+  gradient.addColorStop(0, `rgba(255, 190, 70, ${0.22 + pulse * 0.16})`);
+  gradient.addColorStop(1, 'rgba(255, 150, 40, 0)');
+  context.fillStyle = gradient;
+  context.fillRect(screenX - 14, screenY - 14, 44, 44);
+  context.restore();
 }
 
 /** @private Imagen que corresponde a cada tipo de baldosa. */
@@ -8045,7 +9664,7 @@ function drawDecorations(context, { decorations, theme, isCheckpointReached, ham
     const isFarOffScreen = screenX < -130 || screenX > SCREEN_WIDTH + 40;
     if (isFarOffScreen) continue;
     switch (decoration.type) {
-      case 'cloud': context.drawImage(getCloudImage(Boolean(theme.isNight)), screenX, decoration.row * TILE_SIZE); break;
+      case 'cloud': break; // las nubes son ahora parte del fondo
       case 'sign': drawSign(context, screenX, decoration.text); break;
       case 'checkpoint': drawCheckpointFlag(context, screenX, isCheckpointReached); break;
       case 'goalPole': drawGoalPole(context, screenX, hamY === null ? HAM_START_Y : hamY); break;
@@ -8080,7 +9699,7 @@ const __module_src_game_hud_js = (() => {
  * @file Marcador superior (HUD): puntos, vidas, pesetas, nivel y tiempo.
  */
 const { LEVEL_TIMER } = __module_src_config_constants_js;
-const { SPRITES } = __module_src_graphics_sprites_js;
+const { SPRITES, drawSpriteFitted } = __module_src_graphics_sprites_js;
 const { drawText } = __module_src_graphics_font_js;
 
 const LABEL_ROW_Y = 5;
@@ -8102,7 +9721,7 @@ function drawHud(context, { session, levelNumber, levelName, timeRemaining, step
   drawText(context, String(session.score).padStart(6, '0'), 12, VALUE_ROW_Y, '#fcfcfc', SHADOW);
 
   drawText(context, `♥×${session.lives}`, 96, LABEL_ROW_Y, '#fc7c7c', SHADOW);
-  context.drawImage(SPRITES.peseta_spin0.image, 94, 13, 9, 8);
+  drawSpriteFitted(context, SPRITES.peseta_spin0, 94, 13, 9, 8);
   drawText(context, `×${String(session.coins).padStart(2, '0')}`, 104, VALUE_ROW_Y, '#fcfcfc', SHADOW);
 
   drawText(context, 'NIVEL', 160, LABEL_ROW_Y, '#fcfcfc', SHADOW);
@@ -8807,7 +10426,7 @@ class World {
     const shakeOffset = this.shakeStepsLeft > 0 ? (this.stepCounter % 2 ? 2 : -2) : 0;
     const cameraX = Math.round(this.cameraX) + shakeOffset;
 
-    drawBackground(context, backgroundImages, this.theme, cameraX, this.fireworkParticles);
+    drawBackground(context, backgroundImages, this.theme, cameraX, this.fireworkParticles, this.stepCounter);
     drawDecorations(context, {
       decorations: this.level.decorations,
       theme: this.theme,
@@ -8963,7 +10582,7 @@ class TitleScreen {
   draw(context) {
     const madridAssets = getThemeAssets('madrid');
     const scrollX = this.stepCounter * BACKGROUND_SCROLL_SPEED;
-    drawBackground(context, madridAssets.backgroundImages, madridAssets.theme, scrollX);
+    drawBackground(context, madridAssets.backgroundImages, madridAssets.theme, scrollX, [], this.stepCounter);
     this.drawScrollingGround(context, madridAssets.tileImages, scrollX);
     this.drawLogo(context);
     this.drawMenu(context);
@@ -8976,8 +10595,8 @@ class TitleScreen {
     const { groundSurface, groundFill } = tileImages;
     const offset = -Math.floor(scrollX % TILE_SIZE);
     for (let x = offset; x < SCREEN_WIDTH; x += TILE_SIZE) {
-      context.drawImage(groundSurface, x, GROUND_SURFACE_Y);
-      context.drawImage(groundFill, x, GROUND_SURFACE_Y + TILE_SIZE);
+      context.drawImage(groundSurface, x, GROUND_SURFACE_Y, TILE_SIZE, TILE_SIZE);
+      context.drawImage(groundFill, x, GROUND_SURFACE_Y + TILE_SIZE, TILE_SIZE, TILE_SIZE);
     }
   }
 
@@ -9396,6 +11015,7 @@ const { BUTTON } = __module_src_core_input_js;
 const { toggleFullscreen } = __module_src_core_screen_js;
 const { recordAchievement } = __module_src_core_storage_js;
 const { soundEngine } = __module_src_audio_soundEngine_js;
+const { screenFx } = __module_src_graphics_screenFx_js;
 const { LEVELS } = __module_src_world_levels_js;
 const { GameSession } = __module_src_game_GameSession_js;
 const { World } = __module_src_game_World_js;
@@ -9416,6 +11036,8 @@ class Game {
     this.session = new GameSession();
     /** Pantalla activa: cualquier objeto con `update()` y `draw(context)`. */
     this.activeScreen = null;
+    /** Pantalla del paso anterior, para reiniciar los efectos al cambiar de pantalla. */
+    this.previousScreen = null;
   }
 
   /** Muestra la pantalla de título. */
@@ -9427,6 +11049,13 @@ class Game {
   update() {
     if (this.controls.wasPressed(BUTTON.MUTE)) soundEngine.toggleMute();
     if (this.controls.wasPressed(BUTTON.FULLSCREEN)) toggleFullscreen();
+    if (this.activeScreen !== this.previousScreen) {
+      screenFx.reset();
+      this.previousScreen = this.activeScreen;
+    }
+    screenFx.update();
+    // Los golpes fuertes congelan la simulación unos fotogramas para dar peso.
+    if (screenFx.consumeHitStop()) return;
     this.activeScreen.update();
   }
 
@@ -9521,7 +11150,7 @@ const { input } = __module_src_core_input_js;
 const { startFixedStepGameLoop } = __module_src_core_gameLoop_js;
 const { soundEngine } = __module_src_audio_soundEngine_js;
 const { buildFont } = __module_src_graphics_font_js;
-const { buildSprites } = __module_src_graphics_sprites_js;
+const { buildSprites, SPRITES } = __module_src_graphics_sprites_js;
 const { Game } = __module_src_game_Game_js;
 
 /** Identificador del `<canvas>` en `page.html`. */
@@ -9541,7 +11170,7 @@ function startSuperPaco() {
 
   const game = new Game({ controls: input });
   game.start();
-  if (IS_DEBUG_MODE) window.superPacoDebug = { game, input, soundEngine };
+  if (IS_DEBUG_MODE) window.superPacoDebug = { game, input, soundEngine, sprites: SPRITES };
 
   startFixedStepGameLoop({
     update() {
@@ -9549,7 +11178,8 @@ function startSuperPaco() {
       game.update();
     },
     render() {
-      game.draw(screen.context);
+      game.draw(screen.beginFrame());
+      screen.present();
     }
   });
   screen.canvas.focus();

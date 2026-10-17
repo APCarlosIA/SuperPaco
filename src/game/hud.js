@@ -2,7 +2,7 @@
  * @file Marcador superior (HUD): puntos, vidas, pesetas, nivel y tiempo.
  */
 import { LEVEL_TIMER } from '../config/constants.js';
-import { SPRITES } from '../graphics/sprites.js';
+import { SPRITES, drawSpriteFitted } from '../graphics/sprites.js';
 import { drawText } from '../graphics/font.js';
 
 const LABEL_ROW_Y = 5;
@@ -24,7 +24,7 @@ export function drawHud(context, { session, levelNumber, levelName, timeRemainin
   drawText(context, String(session.score).padStart(6, '0'), 12, VALUE_ROW_Y, '#fcfcfc', SHADOW);
 
   drawText(context, `♥×${session.lives}`, 96, LABEL_ROW_Y, '#fc7c7c', SHADOW);
-  context.drawImage(SPRITES.peseta_spin0.image, 94, 13, 9, 8);
+  drawSpriteFitted(context, SPRITES.peseta_spin0, 94, 13, 9, 8);
   drawText(context, `×${String(session.coins).padStart(2, '0')}`, 104, VALUE_ROW_Y, '#fcfcfc', SHADOW);
 
   drawText(context, 'NIVEL', 160, LABEL_ROW_Y, '#fcfcfc', SHADOW);

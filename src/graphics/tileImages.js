@@ -6,6 +6,7 @@
 import { TILE_SIZE } from '../config/constants.js';
 import { createCanvas, fillRectangle, fillTriangle } from '../core/canvas.js';
 import { createSeededRandom } from '../core/math.js';
+import { scale3x } from './hd.js';
 
 /** Número de fotogramas de las animaciones de bloques, lava y agua. */
 export const TILE_ANIMATION_FRAMES = 4;
@@ -320,22 +321,61 @@ function createBridgeTile() {
  */
 
 /**
- * Genera todas las imágenes de baldosas de un tema.
+ * Convierte una baldosa pixelada en su versión de alta resolución:
+ * ampliación suavizada y, para los bloques, un biselado de luz y sombra.
+ * @param {HTMLCanvasElement} tile
+ * @param {{bevel?: boolean, depthShade?: number}} [options]
+ * @returns {HTMLCanvasElement} Imagen de 3× el tamaño.
+ */
+function toHdTile(tile, { bevel = false, depthShade = 0 } = {}) {
+  const big = scale3x(tile);
+  const context = big.getContext('2d');
+  context.globalCompositeOperation = 'source-atop';
+  if (depthShade) {
+    const gradient = context.createLinearGradient(0, 0, 0, big.height);
+    gradient.addColorStop(0, 'rgba(0, 0, 0, 0)');
+    gradient.addColorStop(1, `rgba(12, 6, 36, ${depthShade})`);
+    context.fillStyle = gradient;
+    context.fillRect(0, 0, big.width, big.height);
+  }
+  if (bevel) {
+    context.fillStyle = 'rgba(255, 255, 255, 0.3)';
+    context.fillRect(0, 0, big.width, 2);
+    context.fillRect(0, 0, 2, big.height);
+    context.fillStyle = 'rgba(10, 4, 30, 0.38)';
+    context.fillRect(0, big.height - 2, big.width, 2);
+    context.fillRect(big.width - 2, 0, 2, big.height);
+  }
+  context.globalCompositeOperation = 'source-over';
+  return big;
+}
+
+/** Aplica {@link toHdTile} a las baldosas de un líquido animado. */
+function hdLiquidFrames(frames) {
+  return frames.map(frame => ({ surface: toHdTile(frame.surface), depth: toHdTile(frame.depth) }));
+}
+
+/**
+ * Genera todas las imágenes de baldosas de un tema, en alta resolución.
  * @param {import('../world/themes.js').Theme} theme
  * @returns {TileImages}
  */
 export function createTileImages(theme) {
+  const barrel = createBarrelTiles();
   return {
-    groundSurface: createGroundTile(theme.ground, true),
-    groundFill: createGroundTile(theme.ground, false),
-    brick: createBrickTile(theme.brickColors),
-    questionBlockFrames: [0, 1, 2, 3].map(createQuestionBlockTile),
-    usedBlock: createUsedBlockTile(),
-    azulejo: createAzulejoTile(),
-    barrel: createBarrelTiles(),
-    oneWayPlatform: createOneWayPlatformTile(theme.oneWayPlatform),
-    lavaFrames: createLiquidFrames({ surfaceColor: '#e83c00', deepColor: '#c02000', waveColor: '#fc9c00', sparkleColor: '#fc7c00', waveBaseline: 4 }),
-    waterFrames: createLiquidFrames({ surfaceColor: '#1c64c8', deepColor: '#1450a8', waveColor: '#5ca8fc', sparkleColor: '#a8d8fc', waveBaseline: 4 }),
-    bridge: createBridgeTile()
+    groundSurface: toHdTile(createGroundTile(theme.ground, true)),
+    groundFill: toHdTile(createGroundTile(theme.ground, false), { depthShade: 0.16 }),
+    brick: toHdTile(createBrickTile(theme.brickColors), { bevel: true }),
+    questionBlockFrames: [0, 1, 2, 3].map(frame => toHdTile(createQuestionBlockTile(frame), { bevel: true })),
+    usedBlock: toHdTile(createUsedBlockTile(), { bevel: true }),
+    azulejo: toHdTile(createAzulejoTile()),
+    barrel: {
+      topLeft: toHdTile(barrel.topLeft), topRight: toHdTile(barrel.topRight),
+      bodyLeft: toHdTile(barrel.bodyLeft), bodyRight: toHdTile(barrel.bodyRight)
+    },
+    oneWayPlatform: toHdTile(createOneWayPlatformTile(theme.oneWayPlatform), { bevel: true }),
+    lavaFrames: hdLiquidFrames(createLiquidFrames({ surfaceColor: '#e83c00', deepColor: '#c02000', waveColor: '#fc9c00', sparkleColor: '#fc7c00', waveBaseline: 4 })),
+    waterFrames: hdLiquidFrames(createLiquidFrames({ surfaceColor: '#1c64c8', deepColor: '#1450a8', waveColor: '#5ca8fc', sparkleColor: '#a8d8fc', waveBaseline: 4 })),
+    bridge: toHdTile(createBridgeTile(), { bevel: true })
   };
 }

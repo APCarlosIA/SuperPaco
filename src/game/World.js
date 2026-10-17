@@ -689,7 +689,7 @@ export class World {
     const shakeOffset = this.shakeStepsLeft > 0 ? (this.stepCounter % 2 ? 2 : -2) : 0;
     const cameraX = Math.round(this.cameraX) + shakeOffset;
 
-    drawBackground(context, backgroundImages, this.theme, cameraX, this.fireworkParticles);
+    drawBackground(context, backgroundImages, this.theme, cameraX, this.fireworkParticles, this.stepCounter);
     drawDecorations(context, {
       decorations: this.level.decorations,
       theme: this.theme,

@@ -13,6 +13,13 @@ export const SCREEN_WIDTH = 320;
 /** Alto de la pantalla interna en píxeles. */
 export const SCREEN_HEIGHT = 240;
 
+/**
+ * Factor de supersampling del dibujado. El juego sigue razonando en 320×240,
+ * pero se pinta sobre un lienzo 3 veces mayor (960×720) para poder usar arte
+ * con más detalle, contornos finos, degradados y efectos suaves.
+ */
+export const RENDER_SCALE = 3;
+
 /** Lado de una baldosa (tile) en píxeles. Todo el mapa es una rejilla de baldosas. */
 export const TILE_SIZE = 16;
 

@@ -11,7 +11,7 @@ import { input } from './core/input.js';
 import { startFixedStepGameLoop } from './core/gameLoop.js';
 import { soundEngine } from './audio/soundEngine.js';
 import { buildFont } from './graphics/font.js';
-import { buildSprites } from './graphics/sprites.js';
+import { buildSprites, SPRITES } from './graphics/sprites.js';
 import { Game } from './game/Game.js';
 
 /** Identificador del `<canvas>` en `page.html`. */
@@ -31,7 +31,7 @@ function startSuperPaco() {
 
   const game = new Game({ controls: input });
   game.start();
-  if (IS_DEBUG_MODE) window.superPacoDebug = { game, input, soundEngine };
+  if (IS_DEBUG_MODE) window.superPacoDebug = { game, input, soundEngine, sprites: SPRITES };
 
   startFixedStepGameLoop({
     update() {
@@ -39,7 +39,8 @@ function startSuperPaco() {
       game.update();
     },
     render() {
-      game.draw(screen.context);
+      game.draw(screen.beginFrame());
+      screen.present();
     }
   });
   screen.canvas.focus();

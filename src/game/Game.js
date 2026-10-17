@@ -16,6 +16,7 @@ import { BUTTON } from '../core/input.js';
 import { toggleFullscreen } from '../core/screen.js';
 import { recordAchievement } from '../core/storage.js';
 import { soundEngine } from '../audio/soundEngine.js';
+import { screenFx } from '../graphics/screenFx.js';
 import { LEVELS } from '../world/levels.js';
 import { GameSession } from './GameSession.js';
 import { World } from './World.js';
@@ -36,6 +37,8 @@ export class Game {
     this.session = new GameSession();
     /** Pantalla activa: cualquier objeto con `update()` y `draw(context)`. */
     this.activeScreen = null;
+    /** Pantalla del paso anterior, para reiniciar los efectos al cambiar de pantalla. */
+    this.previousScreen = null;
   }
 
   /** Muestra la pantalla de título. */
@@ -47,6 +50,13 @@ export class Game {
   update() {
     if (this.controls.wasPressed(BUTTON.MUTE)) soundEngine.toggleMute();
     if (this.controls.wasPressed(BUTTON.FULLSCREEN)) toggleFullscreen();
+    if (this.activeScreen !== this.previousScreen) {
+      screenFx.reset();
+      this.previousScreen = this.activeScreen;
+    }
+    screenFx.update();
+    // Los golpes fuertes congelan la simulación unos fotogramas para dar peso.
+    if (screenFx.consumeHitStop()) return;
     this.activeScreen.update();
   }
 
