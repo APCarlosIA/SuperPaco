@@ -4,7 +4,7 @@
  */
 import { TILE_SIZE, SCREEN_HEIGHT } from '../../config/constants.js';
 import { randomInteger } from '../../core/math.js';
-import { fillCircle, fillRectangle } from '../../core/canvas.js';
+import { addGlow, outlinedCircle } from '../../graphics/shapes.js';
 import { soundEngine, SOUND_EFFECT } from '../../audio/soundEngine.js';
 import { Enemy } from './Enemy.js';
 
@@ -61,14 +61,31 @@ export class LavaBubble extends Enemy {
    * @param {number} cameraX
    */
   draw(context, cameraX) {
-    const x = Math.round(this.centerX - cameraX);
-    const y = Math.round(this.centerY);
-    const coreOffset = this.velocityY < 0 ? 1 : -1;
-    fillCircle(context, x, y, 6, '#e83c00');
-    fillCircle(context, x, y + coreOffset, 4, '#fc9c00');
-    fillCircle(context, x, y, 2, '#fcf0a0');
-    // Ojitos.
-    fillRectangle(context, x - 3, y - 2, 2, 2, '#101010');
-    fillRectangle(context, x + 1, y - 2, 2, 2, '#101010');
+    const x = this.centerX - cameraX;
+    const y = this.centerY;
+    const stretch = this.velocityY < 0 ? 1.12 : 0.94;
+    addGlow(context, x, y, 22, '255, 110, 30', 0.6);
+    context.save();
+    context.translate(x, y);
+    context.scale(1 / stretch, stretch);
+    // Lengüetas de fuego.
+    context.fillStyle = '#ff9a1c';
+    for (const [offsetX, height] of [[-3, 4], [0, 6], [3, 4]]) {
+      context.beginPath(); context.moveTo(offsetX - 2, -4); context.quadraticCurveTo(offsetX, -4 - height, offsetX + 0.6, -4 - height * 1.1); context.quadraticCurveTo(offsetX + 1.6, -6, offsetX + 2, -4); context.fill();
+    }
+    outlinedCircle(context, 0, 0, 6.4, '#ffb030', '#e0380a', 0.9);
+    const core = context.createRadialGradient(-1, -1.5, 0, -1, -1.5, 4);
+    core.addColorStop(0, '#fff6b8');
+    core.addColorStop(1, 'rgba(255, 200, 60, 0)');
+    context.fillStyle = core;
+    context.beginPath(); context.arc(0, 0, 5, 0, Math.PI * 2); context.fill();
+    // Ojitos enfadados.
+    context.fillStyle = '#ffffff';
+    context.beginPath(); context.arc(-2.4, -1.2, 1.6, 0, Math.PI * 2); context.arc(2.4, -1.2, 1.6, 0, Math.PI * 2); context.fill();
+    context.fillStyle = '#140c20';
+    context.beginPath(); context.arc(-2.1, -1, 0.8, 0, Math.PI * 2); context.arc(2.7, -1, 0.8, 0, Math.PI * 2); context.fill();
+    context.strokeStyle = '#140c20'; context.lineWidth = 0.7;
+    context.beginPath(); context.moveTo(-4.2, -3.4); context.lineTo(-1.2, -2.4); context.moveTo(4.2, -3.4); context.lineTo(1.2, -2.4); context.stroke();
+    context.restore();
   }
 }

@@ -5,15 +5,9 @@
  */
 import { SCREEN_WIDTH, SCREEN_HEIGHT } from '../config/constants.js';
 import { OUTLINE_COLOR } from './hd.js';
+import { roundedPath } from './shapes.js';
 
 const TAU = Math.PI * 2;
-
-/** Camino de un rectángulo con esquinas redondeadas. */
-function roundedPath(context, x, y, width, height, radius) {
-  context.beginPath();
-  if (context.roundRect) context.roundRect(x, y, width, height, radius);
-  else context.rect(x, y, width, height);
-}
 
 /**
  * Panel translúcido tipo cristal con borde y reflejo.

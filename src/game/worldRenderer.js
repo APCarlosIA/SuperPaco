@@ -8,7 +8,7 @@
  */
 import { SCREEN_WIDTH, SCREEN_HEIGHT, TILE_SIZE, GROUND_SURFACE_Y, GROUND_TOP_ROW, RENDER_SCALE } from '../config/constants.js';
 import { OUTLINE_COLOR } from '../graphics/hd.js';
-import { fillRectangle } from '../core/canvas.js';
+import { roundedPath, fillWithOutline } from '../graphics/shapes.js';
 import { SPRITES, drawSprite } from '../graphics/sprites.js';
 import { drawText, measureTextWidth } from '../graphics/font.js';
 import { BACKGROUND_LAYER_WIDTH, PARALLAX_FACTORS } from '../graphics/backgroundConstants.js';
@@ -53,8 +53,19 @@ export function drawBackground(context, backgroundImages, theme, cameraX, firewo
   if (backgroundImages.cloudLayer) drawRepeatingLayer(context, backgroundImages.cloudLayer, cameraX * 0.5 + stepCounter * 0.15, PARALLAX_FACTORS.farLayer * 0.6);
   drawRepeatingLayer(context, backgroundImages.farLayer, cameraX, PARALLAX_FACTORS.farLayer);
   for (const particle of fireworkParticles) {
-    const isFadingOut = particle.ageInSteps >= 30 && particle.ageInSteps % 4 >= 2;
-    fillRectangle(context, particle.x, particle.y, 2, 2, isFadingOut ? '#fcfcfc' : particle.color);
+    const fade = particle.ageInSteps >= 30 ? Math.max(0, 1 - (particle.ageInSteps - 30) / 24) : 1;
+    context.save();
+    context.globalCompositeOperation = 'lighter';
+    const gradient = context.createRadialGradient(particle.x, particle.y, 0, particle.x, particle.y, 6);
+    gradient.addColorStop(0, particle.color);
+    gradient.addColorStop(1, 'rgba(255,255,255,0)');
+    context.globalAlpha = 0.85 * fade;
+    context.fillStyle = gradient;
+    context.fillRect(particle.x - 6, particle.y - 6, 12, 12);
+    context.globalAlpha = fade;
+    context.fillStyle = '#ffffff';
+    context.fillRect(particle.x - 0.7, particle.y - 0.7, 1.4, 1.4);
+    context.restore();
   }
   drawRepeatingLayer(context, backgroundImages.midLayer, cameraX, PARALLAX_FACTORS.midLayer);
   drawRepeatingLayer(context, backgroundImages.nearLayer, cameraX, PARALLAX_FACTORS.nearLayer);
@@ -223,26 +234,6 @@ function chooseTileImage(tile, { tileMap, tileImages, theme, column, row, pingPo
 /* ------------------------------------------------------------------ */
 /* Decorados                                                           */
 /* ------------------------------------------------------------------ */
-
-/** Camino de un rectángulo con esquinas redondeadas (compatible con navegadores sin roundRect). */
-function roundedPath(context, x, y, width, height, radius) {
-  context.beginPath();
-  if (context.roundRect) context.roundRect(x, y, width, height, radius);
-  else context.rect(x, y, width, height);
-}
-
-/** Rellena con degradado vertical y dibuja el contorno oscuro del camino actual. */
-function fillWithOutline(context, topColor, bottomColor, top, bottom, lineWidth = 0.8) {
-  const gradient = context.createLinearGradient(0, top, 0, bottom);
-  gradient.addColorStop(0, topColor);
-  gradient.addColorStop(1, bottomColor);
-  context.fillStyle = gradient;
-  context.fill();
-  context.strokeStyle = OUTLINE_COLOR;
-  context.lineWidth = lineWidth;
-  context.lineJoin = 'round';
-  context.stroke();
-}
 
 /** Cartel de madera con texto clavado en el suelo. */
 function drawSign(context, screenX, text) {

@@ -4,7 +4,7 @@
  */
 import { GAME_RULES } from '../../config/constants.js';
 import { rectanglesOverlap } from '../../core/math.js';
-import { fillCircle } from '../../core/canvas.js';
+import { addGlow } from '../../graphics/shapes.js';
 import { soundEngine, SOUND_EFFECT } from '../../audio/soundEngine.js';
 import { Entity } from '../Entity.js';
 
@@ -59,8 +59,45 @@ export class Explosion extends Entity {
     const progress = this.ageInSteps / LIFETIME_STEPS;
     const x = this.centerX - cameraX;
     const y = this.centerY;
-    fillCircle(context, x, y, Math.round(8 + progress * 12), progress < 0.5 ? '#fcfcfc' : '#fc7c00');
-    fillCircle(context, x, y, Math.round(4 + progress * 10), progress < 0.5 ? '#fcd800' : '#d82800');
-    if (progress > 0.6) fillCircle(context, x, y, Math.round(progress * 9), '#5c5c5c');
+    const radius = 8 + progress * 14;
+    addGlow(context, x, y, radius * 2.6, '255, 140, 40', 0.8 * (1 - progress));
+    // Onda expansiva.
+    context.save();
+    context.globalAlpha = Math.max(0, 1 - progress * 1.4);
+    context.strokeStyle = '#ffffff';
+    context.lineWidth = 2;
+    context.beginPath();
+    context.arc(x, y, radius * 1.25, 0, Math.PI * 2);
+    context.stroke();
+    context.restore();
+    // Bola de fuego.
+    context.save();
+    context.globalAlpha = Math.max(0, 1 - progress * 0.7);
+    const fire = context.createRadialGradient(x, y, 0, x, y, radius);
+    fire.addColorStop(0, '#ffffff');
+    fire.addColorStop(0.35, '#ffe45a');
+    fire.addColorStop(0.7, '#ff7a1c');
+    fire.addColorStop(1, 'rgba(216, 40, 0, 0)');
+    context.fillStyle = fire;
+    context.beginPath();
+    context.arc(x, y, radius, 0, Math.PI * 2);
+    context.fill();
+    context.restore();
+    // Humo que sube al final.
+    if (progress > 0.45) {
+      const smoke = (progress - 0.45) / 0.55;
+      context.save();
+      context.globalAlpha = 0.5 * (1 - smoke);
+      for (const [offsetX, offsetY, size] of [[-5, -3, 6], [4, -6, 7], [0, -10, 5]]) {
+        const puff = context.createRadialGradient(x + offsetX, y + offsetY - smoke * 8, 0, x + offsetX, y + offsetY - smoke * 8, size + smoke * 4);
+        puff.addColorStop(0, '#6a6470');
+        puff.addColorStop(1, 'rgba(60, 56, 66, 0)');
+        context.fillStyle = puff;
+        context.beginPath();
+        context.arc(x + offsetX, y + offsetY - smoke * 8, size + smoke * 4, 0, Math.PI * 2);
+        context.fill();
+      }
+      context.restore();
+    }
   }
 }

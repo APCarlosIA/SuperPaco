@@ -8,7 +8,8 @@
  */
 import { TILE_SIZE } from '../../config/constants.js';
 import { clamp, random } from '../../core/math.js';
-import { fillCircle, fillRectangle } from '../../core/canvas.js';
+import { OUTLINE_COLOR } from '../../graphics/hd.js';
+import { roundedPath, fillWithOutline, outlinedCircle } from '../../graphics/shapes.js';
 import { Entity } from '../Entity.js';
 
 /** Separación (px) entre los círculos de colisión de un brazo. */
@@ -122,33 +123,66 @@ export class RotatingHazard extends Entity {
 
   /** @private Cuatro palos de madera con velas de lona entramada. */
   drawWindmillBlades(context, cameraX) {
+    const pivotX = this.pivotX - cameraX;
+    const pivotY = this.pivotY;
     for (let arm = 0; arm < this.armCount; arm++) {
       const armAngle = this.angle + arm * (Math.PI * 2 / this.armCount);
-      const alongX = Math.cos(armAngle);
-      const alongY = Math.sin(armAngle);
-      // Perpendicular al brazo: hacia ese lado se despliega la vela.
-      const acrossX = -alongY;
-      const acrossY = alongX;
-      for (let distance = 4; distance <= 60; distance += 2) {
-        fillRectangle(context, this.pivotX + alongX * distance - cameraX - 1, this.pivotY + alongY * distance - 1, 3, 3, '#4c2c14');
-      }
-      for (let distance = 18; distance <= 60; distance += 3) {
-        for (let width = 2; width <= 9; width += 3) {
-          const color = (distance + width) % 2 ? '#e8e0cc' : '#b8b0a0';
-          fillRectangle(context, this.pivotX + alongX * distance + acrossX * width - cameraX - 1, this.pivotY + alongY * distance + acrossY * width - 1, 2, 2, color);
-        }
-      }
+      context.save();
+      context.translate(pivotX, pivotY);
+      context.rotate(armAngle);
+      // Vela de lona con entramado.
+      context.beginPath();
+      context.rect(16, 0.8, 44, 10);
+      const sail = context.createLinearGradient(0, 0.8, 0, 10.8);
+      sail.addColorStop(0, '#f6f0dc');
+      sail.addColorStop(1, '#c8bea4');
+      context.fillStyle = sail;
+      context.fill();
+      context.strokeStyle = OUTLINE_COLOR;
+      context.lineWidth = 0.8;
+      context.stroke();
+      context.strokeStyle = 'rgba(90, 70, 40, 0.55)';
+      context.lineWidth = 0.4;
+      for (let slat = 22; slat < 60; slat += 6) { context.beginPath(); context.moveTo(slat, 0.8); context.lineTo(slat, 10.8); context.stroke(); }
+      context.beginPath(); context.moveTo(16, 5.8); context.lineTo(60, 5.8); context.stroke();
+      // Palo principal.
+      roundedPath(context, 2, -1.2, 59, 2.4, 1);
+      fillWithOutline(context, '#8a5a30', '#4c2c14', -1.2, 1.2, 0.7);
+      context.restore();
     }
-    fillCircle(context, this.pivotX - cameraX, this.pivotY, 4, '#2c1c0c');
+    outlinedCircle(context, pivotX, pivotY, 4.4, '#6a4a30', '#2c1c0c', 0.9);
+    outlinedCircle(context, pivotX, pivotY, 1.6, '#ffd89a', '#c88a40', 0.5);
   }
 
   /** @private Churros dorados unidos a un eje blanco. */
   drawChurrosBar(context, cameraX) {
-    for (const [pointX, pointY] of this.getCollisionPoints()) {
-      fillCircle(context, pointX - cameraX, pointY, 4, '#c87830');
-      fillRectangle(context, pointX - cameraX - 2, pointY - 1, 5, 1, '#8c4c1c');
-      fillRectangle(context, pointX - cameraX - 1, pointY - 3, 2, 1, '#fcd070');
+    const points = this.getCollisionPoints();
+    const pivotX = this.pivotX - cameraX;
+    context.strokeStyle = OUTLINE_COLOR;
+    context.lineWidth = 2.6;
+    context.lineCap = 'round';
+    context.beginPath();
+    for (const [pointX, pointY] of points) { context.moveTo(pivotX, this.pivotY); context.lineTo(pointX - cameraX, pointY); }
+    context.stroke();
+    context.strokeStyle = '#f4f0ec';
+    context.lineWidth = 1.2;
+    context.beginPath();
+    for (const [pointX, pointY] of points) { context.moveTo(pivotX, this.pivotY); context.lineTo(pointX - cameraX, pointY); }
+    context.stroke();
+    for (const [pointX, pointY] of points) {
+      const x = pointX - cameraX;
+      context.save();
+      context.translate(x, pointY);
+      context.rotate(this.angle);
+      roundedPath(context, -4.6, -2.4, 9.2, 4.8, 2.4);
+      fillWithOutline(context, '#ffd070', '#c07a28', -2.4, 2.4, 0.8);
+      context.strokeStyle = 'rgba(120, 60, 10, 0.55)';
+      context.lineWidth = 0.4;
+      for (let ridge = -2.4; ridge <= 2.4; ridge += 1.6) { context.beginPath(); context.moveTo(ridge, -2); context.lineTo(ridge, 2); context.stroke(); }
+      context.fillStyle = 'rgba(255,255,255,0.8)';
+      context.fillRect(-3, -1.7, 1, 0.6); context.fillRect(1.4, -1.2, 0.8, 0.6);
+      context.restore();
     }
-    fillCircle(context, this.pivotX - cameraX, this.pivotY, 2, '#fcfcfc');
+    outlinedCircle(context, pivotX, this.pivotY, 2.2, '#ffffff', '#c8c8d8', 0.8);
   }
 }

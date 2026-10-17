@@ -3194,6 +3194,72 @@ function recordAchievement({ unlockedLevel = 0, score = 0 }) {
 return { loadProgress, saveProgress, recordAchievement };
 })();
 
+// ─── src/graphics/shapes.js ───
+const __module_src_graphics_shapes_js = (() => {
+/**
+ * @file Formas vectoriales con contorno oscuro y degradado, y resplandores
+ * aditivos. Las usan los decorados, enemigos y efectos para tener todos el
+ * mismo aspecto de dibujo animado.
+ */
+const { OUTLINE_COLOR } = __module_src_graphics_hd_js;
+
+/** Camino de un rectángulo con esquinas redondeadas (compatible con navegadores sin roundRect). */
+function roundedPath(context, x, y, width, height, radius) {
+  context.beginPath();
+  if (context.roundRect) context.roundRect(x, y, width, height, radius);
+  else context.rect(x, y, width, height);
+}
+
+/**
+ * Rellena el camino actual con un degradado vertical y le dibuja el contorno oscuro.
+ * @param {CanvasRenderingContext2D} context
+ * @param {string} topColor
+ * @param {string} bottomColor
+ * @param {number} top Altura donde empieza el degradado.
+ * @param {number} bottom Altura donde termina.
+ * @param {number} [lineWidth]
+ */
+function fillWithOutline(context, topColor, bottomColor, top, bottom, lineWidth = 0.8) {
+  const gradient = context.createLinearGradient(0, top, 0, bottom);
+  gradient.addColorStop(0, topColor);
+  gradient.addColorStop(1, bottomColor);
+  context.fillStyle = gradient;
+  context.fill();
+  context.strokeStyle = OUTLINE_COLOR;
+  context.lineWidth = lineWidth;
+  context.lineJoin = 'round';
+  context.stroke();
+}
+
+/** Círculo con degradado y contorno. */
+function outlinedCircle(context, x, y, radius, topColor, bottomColor, lineWidth = 0.8) {
+  context.beginPath();
+  context.arc(x, y, radius, 0, Math.PI * 2);
+  fillWithOutline(context, topColor, bottomColor, y - radius, y + radius, lineWidth);
+}
+
+/**
+ * Resplandor aditivo circular.
+ * @param {CanvasRenderingContext2D} context
+ * @param {number} x
+ * @param {number} y
+ * @param {number} radius
+ * @param {string} rgb Componentes "r, g, b" del color.
+ * @param {number} intensity Opacidad en el centro (0 a 1).
+ */
+function addGlow(context, x, y, radius, rgb, intensity) {
+  context.save();
+  context.globalCompositeOperation = 'lighter';
+  const gradient = context.createRadialGradient(x, y, 0, x, y, radius);
+  gradient.addColorStop(0, `rgba(${rgb}, ${intensity})`);
+  gradient.addColorStop(1, `rgba(${rgb}, 0)`);
+  context.fillStyle = gradient;
+  context.fillRect(x - radius, y - radius, radius * 2, radius * 2);
+  context.restore();
+}
+return { roundedPath, fillWithOutline, outlinedCircle, addGlow };
+})();
+
 // ─── src/graphics/uiKit.js ───
 const __module_src_graphics_uiKit_js = (() => {
 /**
@@ -3203,15 +3269,9 @@ const __module_src_graphics_uiKit_js = (() => {
  */
 const { SCREEN_WIDTH, SCREEN_HEIGHT } = __module_src_config_constants_js;
 const { OUTLINE_COLOR } = __module_src_graphics_hd_js;
+const { roundedPath } = __module_src_graphics_shapes_js;
 
 const TAU = Math.PI * 2;
-
-/** Camino de un rectángulo con esquinas redondeadas. */
-function roundedPath(context, x, y, width, height, radius) {
-  context.beginPath();
-  if (context.roundRect) context.roundRect(x, y, width, height, radius);
-  else context.rect(x, y, width, height);
-}
 
 /**
  * Panel translúcido tipo cristal con borde y reflejo.
@@ -7570,7 +7630,7 @@ const __module_src_entities_hazards_Explosion_js = (() => {
  */
 const { GAME_RULES } = __module_src_config_constants_js;
 const { rectanglesOverlap } = __module_src_core_math_js;
-const { fillCircle } = __module_src_core_canvas_js;
+const { addGlow } = __module_src_graphics_shapes_js;
 const { soundEngine, SOUND_EFFECT } = __module_src_audio_soundEngine_js;
 const { Entity } = __module_src_entities_Entity_js;
 
@@ -7625,9 +7685,46 @@ class Explosion extends Entity {
     const progress = this.ageInSteps / LIFETIME_STEPS;
     const x = this.centerX - cameraX;
     const y = this.centerY;
-    fillCircle(context, x, y, Math.round(8 + progress * 12), progress < 0.5 ? '#fcfcfc' : '#fc7c00');
-    fillCircle(context, x, y, Math.round(4 + progress * 10), progress < 0.5 ? '#fcd800' : '#d82800');
-    if (progress > 0.6) fillCircle(context, x, y, Math.round(progress * 9), '#5c5c5c');
+    const radius = 8 + progress * 14;
+    addGlow(context, x, y, radius * 2.6, '255, 140, 40', 0.8 * (1 - progress));
+    // Onda expansiva.
+    context.save();
+    context.globalAlpha = Math.max(0, 1 - progress * 1.4);
+    context.strokeStyle = '#ffffff';
+    context.lineWidth = 2;
+    context.beginPath();
+    context.arc(x, y, radius * 1.25, 0, Math.PI * 2);
+    context.stroke();
+    context.restore();
+    // Bola de fuego.
+    context.save();
+    context.globalAlpha = Math.max(0, 1 - progress * 0.7);
+    const fire = context.createRadialGradient(x, y, 0, x, y, radius);
+    fire.addColorStop(0, '#ffffff');
+    fire.addColorStop(0.35, '#ffe45a');
+    fire.addColorStop(0.7, '#ff7a1c');
+    fire.addColorStop(1, 'rgba(216, 40, 0, 0)');
+    context.fillStyle = fire;
+    context.beginPath();
+    context.arc(x, y, radius, 0, Math.PI * 2);
+    context.fill();
+    context.restore();
+    // Humo que sube al final.
+    if (progress > 0.45) {
+      const smoke = (progress - 0.45) / 0.55;
+      context.save();
+      context.globalAlpha = 0.5 * (1 - smoke);
+      for (const [offsetX, offsetY, size] of [[-5, -3, 6], [4, -6, 7], [0, -10, 5]]) {
+        const puff = context.createRadialGradient(x + offsetX, y + offsetY - smoke * 8, 0, x + offsetX, y + offsetY - smoke * 8, size + smoke * 4);
+        puff.addColorStop(0, '#6a6470');
+        puff.addColorStop(1, 'rgba(60, 56, 66, 0)');
+        context.fillStyle = puff;
+        context.beginPath();
+        context.arc(x + offsetX, y + offsetY - smoke * 8, size + smoke * 4, 0, Math.PI * 2);
+        context.fill();
+      }
+      context.restore();
+    }
   }
 }
 return { Explosion };
@@ -8745,7 +8842,7 @@ const __module_src_entities_enemies_LavaBubble_js = (() => {
  */
 const { TILE_SIZE, SCREEN_HEIGHT } = __module_src_config_constants_js;
 const { randomInteger } = __module_src_core_math_js;
-const { fillCircle, fillRectangle } = __module_src_core_canvas_js;
+const { addGlow, outlinedCircle } = __module_src_graphics_shapes_js;
 const { soundEngine, SOUND_EFFECT } = __module_src_audio_soundEngine_js;
 const { Enemy } = __module_src_entities_enemies_Enemy_js;
 
@@ -8802,15 +8899,32 @@ class LavaBubble extends Enemy {
    * @param {number} cameraX
    */
   draw(context, cameraX) {
-    const x = Math.round(this.centerX - cameraX);
-    const y = Math.round(this.centerY);
-    const coreOffset = this.velocityY < 0 ? 1 : -1;
-    fillCircle(context, x, y, 6, '#e83c00');
-    fillCircle(context, x, y + coreOffset, 4, '#fc9c00');
-    fillCircle(context, x, y, 2, '#fcf0a0');
-    // Ojitos.
-    fillRectangle(context, x - 3, y - 2, 2, 2, '#101010');
-    fillRectangle(context, x + 1, y - 2, 2, 2, '#101010');
+    const x = this.centerX - cameraX;
+    const y = this.centerY;
+    const stretch = this.velocityY < 0 ? 1.12 : 0.94;
+    addGlow(context, x, y, 22, '255, 110, 30', 0.6);
+    context.save();
+    context.translate(x, y);
+    context.scale(1 / stretch, stretch);
+    // Lengüetas de fuego.
+    context.fillStyle = '#ff9a1c';
+    for (const [offsetX, height] of [[-3, 4], [0, 6], [3, 4]]) {
+      context.beginPath(); context.moveTo(offsetX - 2, -4); context.quadraticCurveTo(offsetX, -4 - height, offsetX + 0.6, -4 - height * 1.1); context.quadraticCurveTo(offsetX + 1.6, -6, offsetX + 2, -4); context.fill();
+    }
+    outlinedCircle(context, 0, 0, 6.4, '#ffb030', '#e0380a', 0.9);
+    const core = context.createRadialGradient(-1, -1.5, 0, -1, -1.5, 4);
+    core.addColorStop(0, '#fff6b8');
+    core.addColorStop(1, 'rgba(255, 200, 60, 0)');
+    context.fillStyle = core;
+    context.beginPath(); context.arc(0, 0, 5, 0, Math.PI * 2); context.fill();
+    // Ojitos enfadados.
+    context.fillStyle = '#ffffff';
+    context.beginPath(); context.arc(-2.4, -1.2, 1.6, 0, Math.PI * 2); context.arc(2.4, -1.2, 1.6, 0, Math.PI * 2); context.fill();
+    context.fillStyle = '#140c20';
+    context.beginPath(); context.arc(-2.1, -1, 0.8, 0, Math.PI * 2); context.arc(2.7, -1, 0.8, 0, Math.PI * 2); context.fill();
+    context.strokeStyle = '#140c20'; context.lineWidth = 0.7;
+    context.beginPath(); context.moveTo(-4.2, -3.4); context.lineTo(-1.2, -2.4); context.moveTo(4.2, -3.4); context.lineTo(1.2, -2.4); context.stroke();
+    context.restore();
   }
 }
 return { LavaBubble };
@@ -9019,7 +9133,8 @@ const __module_src_entities_hazards_RotatingHazard_js = (() => {
  */
 const { TILE_SIZE } = __module_src_config_constants_js;
 const { clamp, random } = __module_src_core_math_js;
-const { fillCircle, fillRectangle } = __module_src_core_canvas_js;
+const { OUTLINE_COLOR } = __module_src_graphics_hd_js;
+const { roundedPath, fillWithOutline, outlinedCircle } = __module_src_graphics_shapes_js;
 const { Entity } = __module_src_entities_Entity_js;
 
 /** Separación (px) entre los círculos de colisión de un brazo. */
@@ -9133,34 +9248,67 @@ class RotatingHazard extends Entity {
 
   /** @private Cuatro palos de madera con velas de lona entramada. */
   drawWindmillBlades(context, cameraX) {
+    const pivotX = this.pivotX - cameraX;
+    const pivotY = this.pivotY;
     for (let arm = 0; arm < this.armCount; arm++) {
       const armAngle = this.angle + arm * (Math.PI * 2 / this.armCount);
-      const alongX = Math.cos(armAngle);
-      const alongY = Math.sin(armAngle);
-      // Perpendicular al brazo: hacia ese lado se despliega la vela.
-      const acrossX = -alongY;
-      const acrossY = alongX;
-      for (let distance = 4; distance <= 60; distance += 2) {
-        fillRectangle(context, this.pivotX + alongX * distance - cameraX - 1, this.pivotY + alongY * distance - 1, 3, 3, '#4c2c14');
-      }
-      for (let distance = 18; distance <= 60; distance += 3) {
-        for (let width = 2; width <= 9; width += 3) {
-          const color = (distance + width) % 2 ? '#e8e0cc' : '#b8b0a0';
-          fillRectangle(context, this.pivotX + alongX * distance + acrossX * width - cameraX - 1, this.pivotY + alongY * distance + acrossY * width - 1, 2, 2, color);
-        }
-      }
+      context.save();
+      context.translate(pivotX, pivotY);
+      context.rotate(armAngle);
+      // Vela de lona con entramado.
+      context.beginPath();
+      context.rect(16, 0.8, 44, 10);
+      const sail = context.createLinearGradient(0, 0.8, 0, 10.8);
+      sail.addColorStop(0, '#f6f0dc');
+      sail.addColorStop(1, '#c8bea4');
+      context.fillStyle = sail;
+      context.fill();
+      context.strokeStyle = OUTLINE_COLOR;
+      context.lineWidth = 0.8;
+      context.stroke();
+      context.strokeStyle = 'rgba(90, 70, 40, 0.55)';
+      context.lineWidth = 0.4;
+      for (let slat = 22; slat < 60; slat += 6) { context.beginPath(); context.moveTo(slat, 0.8); context.lineTo(slat, 10.8); context.stroke(); }
+      context.beginPath(); context.moveTo(16, 5.8); context.lineTo(60, 5.8); context.stroke();
+      // Palo principal.
+      roundedPath(context, 2, -1.2, 59, 2.4, 1);
+      fillWithOutline(context, '#8a5a30', '#4c2c14', -1.2, 1.2, 0.7);
+      context.restore();
     }
-    fillCircle(context, this.pivotX - cameraX, this.pivotY, 4, '#2c1c0c');
+    outlinedCircle(context, pivotX, pivotY, 4.4, '#6a4a30', '#2c1c0c', 0.9);
+    outlinedCircle(context, pivotX, pivotY, 1.6, '#ffd89a', '#c88a40', 0.5);
   }
 
   /** @private Churros dorados unidos a un eje blanco. */
   drawChurrosBar(context, cameraX) {
-    for (const [pointX, pointY] of this.getCollisionPoints()) {
-      fillCircle(context, pointX - cameraX, pointY, 4, '#c87830');
-      fillRectangle(context, pointX - cameraX - 2, pointY - 1, 5, 1, '#8c4c1c');
-      fillRectangle(context, pointX - cameraX - 1, pointY - 3, 2, 1, '#fcd070');
+    const points = this.getCollisionPoints();
+    const pivotX = this.pivotX - cameraX;
+    context.strokeStyle = OUTLINE_COLOR;
+    context.lineWidth = 2.6;
+    context.lineCap = 'round';
+    context.beginPath();
+    for (const [pointX, pointY] of points) { context.moveTo(pivotX, this.pivotY); context.lineTo(pointX - cameraX, pointY); }
+    context.stroke();
+    context.strokeStyle = '#f4f0ec';
+    context.lineWidth = 1.2;
+    context.beginPath();
+    for (const [pointX, pointY] of points) { context.moveTo(pivotX, this.pivotY); context.lineTo(pointX - cameraX, pointY); }
+    context.stroke();
+    for (const [pointX, pointY] of points) {
+      const x = pointX - cameraX;
+      context.save();
+      context.translate(x, pointY);
+      context.rotate(this.angle);
+      roundedPath(context, -4.6, -2.4, 9.2, 4.8, 2.4);
+      fillWithOutline(context, '#ffd070', '#c07a28', -2.4, 2.4, 0.8);
+      context.strokeStyle = 'rgba(120, 60, 10, 0.55)';
+      context.lineWidth = 0.4;
+      for (let ridge = -2.4; ridge <= 2.4; ridge += 1.6) { context.beginPath(); context.moveTo(ridge, -2); context.lineTo(ridge, 2); context.stroke(); }
+      context.fillStyle = 'rgba(255,255,255,0.8)';
+      context.fillRect(-3, -1.7, 1, 0.6); context.fillRect(1.4, -1.2, 0.8, 0.6);
+      context.restore();
     }
-    fillCircle(context, this.pivotX - cameraX, this.pivotY, 2, '#fcfcfc');
+    outlinedCircle(context, pivotX, this.pivotY, 2.2, '#ffffff', '#c8c8d8', 0.8);
   }
 }
 return { RotatingHazard };
@@ -9173,7 +9321,7 @@ const __module_src_entities_MovingPlatform_js = (() => {
  * vagones de metro, tablones…). Paco puede subirse encima y lo transporta.
  */
 const { TILE_SIZE } = __module_src_config_constants_js;
-const { fillRectangle } = __module_src_core_canvas_js;
+const { roundedPath, fillWithOutline } = __module_src_graphics_shapes_js;
 const { Entity } = __module_src_entities_Entity_js;
 
 const PLATFORM_THICKNESS = 8;
@@ -9229,31 +9377,54 @@ class MovingPlatform extends Entity {
    * @param {number} cameraX
    */
   draw(context, cameraX) {
-    const x = Math.round(this.x - cameraX);
-    const y = Math.round(this.y);
+    const x = this.x - cameraX;
+    const y = this.y;
+    const width = this.width;
     switch (this.look) {
-      case 'inflatable': // Colchoneta hinchable de rayas.
-        for (let offset = 0; offset < this.width; offset += 8) fillRectangle(context, x + offset, y, 8, 7, (offset / 8) % 2 ? '#fcfcfc' : '#fc5ca8');
-        fillRectangle(context, x, y, this.width, 1, '#fcd0e8');
-        fillRectangle(context, x, y + 7, this.width, 1, '#a02c68');
+      case 'inflatable': { // Colchoneta hinchable de rayas.
+        roundedPath(context, x, y, width, 8, 4);
+        fillWithOutline(context, '#ff9acb', '#d83c88', y, y + 8, 0.9);
+        context.save();
+        roundedPath(context, x, y, width, 8, 4);
+        context.clip();
+        context.fillStyle = '#ffffff';
+        for (let offset = 4; offset < width; offset += 16) context.fillRect(x + offset, y, 8, 8);
+        context.fillStyle = 'rgba(255,255,255,0.45)';
+        context.fillRect(x + 3, y + 1, width - 6, 1.6);
+        context.restore();
         break;
-      case 'metroCar': // Techo de un vagón de metro.
-        fillRectangle(context, x, y, this.width, 8, '#e8e8f0');
-        fillRectangle(context, x, y + 3, this.width, 2, '#2c50c8');
-        fillRectangle(context, x, y + 7, this.width, 1, '#5c5c6c');
-        for (let offset = 6; offset < this.width - 6; offset += 12) fillRectangle(context, x + offset, y + 1, 6, 2, '#3c4458');
+      }
+      case 'metroCar': { // Techo de un vagón de metro.
+        roundedPath(context, x, y, width, 8, 2);
+        fillWithOutline(context, '#ffffff', '#b8bed0', y, y + 8, 0.9);
+        context.fillStyle = '#2c50c8';
+        context.fillRect(x + 1, y + 3, width - 2, 2);
+        context.fillStyle = '#fff2a8';
+        for (let offset = 5; offset < width - 8; offset += 12) { roundedPath(context, x + offset, y + 0.8, 6, 1.8, 0.8); context.fill(); }
         break;
-      case 'stone': // Losa de piedra con remaches.
-        fillRectangle(context, x, y, this.width, 8, '#6c6474');
-        fillRectangle(context, x, y, this.width, 1, '#a89cb0');
-        fillRectangle(context, x, y + 7, this.width, 1, '#2c2434');
-        for (let offset = 4; offset < this.width; offset += 8) fillRectangle(context, x + offset, y + 3, 2, 2, '#2c2434');
+      }
+      case 'stone': { // Losa de piedra con remaches.
+        roundedPath(context, x, y, width, 8, 1.6);
+        fillWithOutline(context, '#a89cb8', '#4a4258', y, y + 8, 0.9);
+        context.fillStyle = 'rgba(255,255,255,0.35)';
+        context.fillRect(x + 1, y + 0.8, width - 2, 0.8);
+        for (let offset = 4; offset < width; offset += 8) {
+          context.fillStyle = '#2c2434';
+          context.beginPath(); context.arc(x + offset, y + 4.4, 0.9, 0, Math.PI * 2); context.fill();
+        }
         break;
-      default: // Tablón de madera.
-        fillRectangle(context, x, y, this.width, 7, '#a0642c');
-        fillRectangle(context, x, y, this.width, 1, '#dca060');
-        fillRectangle(context, x, y + 7, this.width, 1, '#4c2c10');
-        for (let offset = 0; offset < this.width; offset += 16) fillRectangle(context, x + offset + 2, y + 3, 1, 1, '#4c2c10');
+      }
+      default: { // Tablón de madera.
+        roundedPath(context, x, y, width, 8, 1.6);
+        fillWithOutline(context, '#d49a58', '#8a5a28', y, y + 8, 0.9);
+        context.strokeStyle = 'rgba(70,36,10,0.45)';
+        context.lineWidth = 0.4;
+        for (const lineY of [2.6, 5]) { context.beginPath(); context.moveTo(x + 1, y + lineY); context.bezierCurveTo(x + width * 0.3, y + lineY - 0.7, x + width * 0.7, y + lineY + 0.7, x + width - 1, y + lineY); context.stroke(); }
+        context.fillStyle = '#3a2008';
+        for (let offset = 3; offset < width; offset += 16) { context.beginPath(); context.arc(x + offset, y + 4, 0.6, 0, Math.PI * 2); context.fill(); }
+        context.fillStyle = 'rgba(255,255,255,0.3)';
+        context.fillRect(x + 1.2, y + 0.9, width - 2.4, 0.7);
+      }
     }
   }
 }
@@ -9519,6 +9690,7 @@ const __module_src_graphics_decorationImages_js = (() => {
 const { RENDER_SCALE } = __module_src_config_constants_js;
 const { createCanvas } = __module_src_core_canvas_js;
 const { OUTLINE_COLOR } = __module_src_graphics_hd_js;
+const { fillWithOutline, outlinedCircle } = __module_src_graphics_shapes_js;
 const { drawText } = __module_src_graphics_font_js;
 
 /** Margen (px lógicos) que rodea a cada decoración. */
@@ -9550,31 +9722,12 @@ function getOrCreate(cacheKey, width, height, paint) {
   return decorationCache.get(cacheKey);
 }
 
-/** Rellena el camino actual con degradado vertical y le pone contorno. */
-function fillOutlined(context, topColor, bottomColor, top, bottom, lineWidth = 0.9) {
-  const gradient = context.createLinearGradient(0, top, 0, bottom);
-  gradient.addColorStop(0, topColor);
-  gradient.addColorStop(1, bottomColor);
-  context.fillStyle = gradient;
-  context.fill();
-  context.strokeStyle = OUTLINE_COLOR;
-  context.lineWidth = lineWidth;
-  context.stroke();
-}
-
-/** Círculo relleno con degradado y contorno. */
-function blob(context, x, y, radius, topColor, bottomColor) {
-  context.beginPath();
-  context.arc(x, y, radius, 0, TAU);
-  fillOutlined(context, topColor, bottomColor, y - radius, y + radius);
-}
-
 /** Cómo se pinta cada decoración. `width` y `height` son lo que ocupa sobre el suelo. */
 const DECORATION_PAINTERS = {
   arbusto: {
     width: 32, height: 16,
     paint(context) {
-      for (const [x, y, radius] of [[8, 11, 6], [24, 11, 6], [16, 8, 8]]) blob(context, x, y, radius, '#6fdc62', '#2a8a3c');
+      for (const [x, y, radius] of [[8, 11, 6], [24, 11, 6], [16, 8, 8]]) outlinedCircle(context, x, y, radius, '#6fdc62', '#2a8a3c');
       context.fillStyle = 'rgba(255,255,255,0.35)';
       for (const [x, y] of [[13, 4.5], [6, 8.5], [22, 7.5]]) { context.beginPath(); context.ellipse(x, y, 1.6, 0.8, -0.5, 0, TAU); context.fill(); }
       for (const [x, y, color] of [[10, 12, '#ff7aa8'], [21, 13, '#ffe45a'], [16, 6, '#ff7aa8']]) { context.fillStyle = color; context.beginPath(); context.arc(x, y, 0.9, 0, TAU); context.fill(); }
@@ -9586,7 +9739,7 @@ const DECORATION_PAINTERS = {
       const pad = (cx, cy, rx, ry, rotation) => {
         context.beginPath();
         context.ellipse(cx, cy, rx, ry, rotation, 0, TAU);
-        fillOutlined(context, '#7ad45a', '#2a7a3a', cy - ry, cy + ry);
+        fillWithOutline(context, '#7ad45a', '#2a7a3a', cy - ry, cy + ry);
         context.fillStyle = '#f4ffc8';
         for (let spine = 0; spine < 5; spine++) { context.beginPath(); context.arc(cx - rx * 0.5 + spine * rx * 0.28, cy - ry * 0.4 + (spine % 2) * ry * 0.5, 0.35, 0, TAU); context.fill(); }
       };
@@ -9595,7 +9748,7 @@ const DECORATION_PAINTERS = {
       pad(17.5, 13, 4.6, 5.6, 0.4);
       pad(11.5, 5.5, 3.6, 4.6, 0.1);
       for (const [x, y] of [[5, 9.4], [17.6, 6.6], [11.5, 1.2], [21, 9.6]]) {
-        context.beginPath(); context.ellipse(x, y, 1.5, 2, 0, 0, TAU); fillOutlined(context, '#ff6a86', '#c82a58', y - 2, y + 2, 0.7);
+        context.beginPath(); context.ellipse(x, y, 1.5, 2, 0, 0, TAU); fillWithOutline(context, '#ff6a86', '#c82a58', y - 2, y + 2, 0.7);
       }
     }
   },
@@ -9605,7 +9758,7 @@ const DECORATION_PAINTERS = {
       context.fillStyle = '#4a4a54'; context.fillRect(15.2, 9, 1.6, 23);
       // Toalla.
       context.beginPath(); context.roundRect ? context.roundRect(3, 28, 26, 4, 1.4) : context.rect(3, 28, 26, 4);
-      fillOutlined(context, '#7ad8ff', '#2a96d8', 28, 32, 0.8);
+      fillWithOutline(context, '#7ad8ff', '#2a96d8', 28, 32, 0.8);
       for (let stripe = 6; stripe < 28; stripe += 6) { context.fillStyle = 'rgba(255,255,255,0.7)'; context.fillRect(stripe, 28.4, 2.4, 3.2); }
       // Sombrilla de gajos rojos y blancos.
       for (let segment = 0; segment < 6; segment++) {
@@ -9623,16 +9776,16 @@ const DECORATION_PAINTERS = {
     width: 24, height: 32,
     paint(context) {
       context.beginPath(); context.moveTo(10.5, 32); context.lineTo(11, 17); context.lineTo(13.5, 17); context.lineTo(14, 32); context.closePath();
-      fillOutlined(context, '#9a6a3a', '#5a3818', 17, 32);
-      for (const [x, y, radius] of [[6.5, 13, 6.5], [17.5, 13, 6.5], [12, 8, 8]]) blob(context, x, y, radius, '#5ec856', '#1f7a36');
-      for (const [x, y] of [[6, 11], [16, 6], [11, 14], [18, 14], [9, 6]]) { blob(context, x, y, 1.9, '#ffb030', '#ee6a10'); context.fillStyle = 'rgba(255,255,255,0.5)'; context.beginPath(); context.arc(x - 0.5, y - 0.6, 0.5, 0, TAU); context.fill(); }
+      fillWithOutline(context, '#9a6a3a', '#5a3818', 17, 32);
+      for (const [x, y, radius] of [[6.5, 13, 6.5], [17.5, 13, 6.5], [12, 8, 8]]) outlinedCircle(context, x, y, radius, '#5ec856', '#1f7a36');
+      for (const [x, y] of [[6, 11], [16, 6], [11, 14], [18, 14], [9, 6]]) { outlinedCircle(context, x, y, 1.9, '#ffb030', '#ee6a10'); context.fillStyle = 'rgba(255,255,255,0.5)'; context.beginPath(); context.arc(x - 0.5, y - 0.6, 0.5, 0, TAU); context.fill(); }
     }
   },
   drago: {
     width: 24, height: 32,
     paint(context) {
       context.beginPath(); context.moveTo(9, 32); context.lineTo(10.5, 16); context.lineTo(13.5, 16); context.lineTo(15, 32); context.closePath();
-      fillOutlined(context, '#a89888', '#6a5a4c', 16, 32);
+      fillWithOutline(context, '#a89888', '#6a5a4c', 16, 32);
       for (const [x1, y1, x2, y2] of [[10.5, 18, 5, 11], [12, 16, 12, 8], [13.5, 18, 19, 11]]) {
         context.strokeStyle = OUTLINE_COLOR; context.lineWidth = 3.4; context.beginPath(); context.moveTo(x1, y1); context.lineTo(x2, y2); context.stroke();
         context.strokeStyle = '#a89888'; context.lineWidth = 2.2; context.beginPath(); context.moveTo(x1, y1); context.lineTo(x2, y2); context.stroke();
@@ -9642,7 +9795,7 @@ const DECORATION_PAINTERS = {
           const angle = -Math.PI * 0.95 + leaf * Math.PI * 0.9 / 6;
           context.beginPath(); context.moveTo(x, y); context.quadraticCurveTo(x + Math.cos(angle) * 4, y + Math.sin(angle) * 4 - 1, x + Math.cos(angle) * 7.5, y + Math.sin(angle) * 6.5);
           context.quadraticCurveTo(x + Math.cos(angle) * 3.4, y + Math.sin(angle) * 2.4, x, y);
-          fillOutlined(context, '#6ad06a', '#1f7a3a', y - 7, y + 3, 0.6);
+          fillWithOutline(context, '#6ad06a', '#1f7a3a', y - 7, y + 3, 0.6);
         }
       }
     }
@@ -9655,9 +9808,9 @@ const DECORATION_PAINTERS = {
       context.beginPath(); context.roundRect ? context.roundRect(2.6, 44, 6.8, 4, 1.4) : context.rect(2.6, 44, 6.8, 4); context.fill();
       context.strokeStyle = OUTLINE_COLOR; context.lineWidth = 0.7; context.stroke();
       context.beginPath(); context.moveTo(1, 3.4); context.lineTo(11, 3.4); context.lineTo(8.6, 0); context.lineTo(3.4, 0); context.closePath();
-      fillOutlined(context, '#4a4658', '#1c1a24', 0, 3.4, 0.7);
+      fillWithOutline(context, '#4a4658', '#1c1a24', 0, 3.4, 0.7);
       context.beginPath(); context.roundRect ? context.roundRect(2.4, 3.2, 7.2, 8, 2.8) : context.rect(2.4, 3.2, 7.2, 8);
-      fillOutlined(context, '#fff6c8', '#ffd35a', 3, 11, 0.8);
+      fillWithOutline(context, '#fff6c8', '#ffd35a', 3, 11, 0.8);
       context.fillStyle = 'rgba(255,255,255,0.7)'; context.beginPath(); context.ellipse(4.4, 6, 0.9, 1.8, 0, 0, TAU); context.fill();
     }
   }
@@ -9698,15 +9851,15 @@ function getBarImage() {
     const round = (x, y, w, h, r) => { context.beginPath(); context.roundRect ? context.roundRect(x, y, w, h, r) : context.rect(x, y, w, h); };
     // Fachada con luz lateral y base oscura.
     round(0, 16, 80, 56, 1);
-    fillOutlined(context, '#fff3de', '#e0cba8', 16, 72, 1);
+    fillWithOutline(context, '#fff3de', '#e0cba8', 16, 72, 1);
     context.fillStyle = 'rgba(30,12,60,0.18)'; context.fillRect(0, 62, 80, 10);
     // Tejado.
     context.beginPath(); context.moveTo(-3, 17); context.lineTo(6, 4); context.lineTo(74, 4); context.lineTo(83, 17); context.closePath();
-    fillOutlined(context, '#e0643a', '#9a3418', 4, 17, 1);
+    fillWithOutline(context, '#e0643a', '#9a3418', 4, 17, 1);
     context.strokeStyle = 'rgba(0,0,0,0.2)'; context.lineWidth = 0.5;
     for (let x = 4; x < 78; x += 5) { context.beginPath(); context.moveTo(x + 1, 5); context.lineTo(x - 2, 16); context.stroke(); }
     // Letrero luminoso.
-    round(12, 19, 56, 14, 3); fillOutlined(context, '#ffffff', '#e8e0d0', 19, 33, 1);
+    round(12, 19, 56, 14, 3); fillWithOutline(context, '#ffffff', '#e8e0d0', 19, 33, 1);
     drawText(context, 'BAR PACO', 40, 23.5, '#d41c1c', { align: 'center' });
     // Toldo verde y blanco con festón.
     for (let x = 0; x < 80; x += 8) {
@@ -9715,16 +9868,16 @@ function getBarImage() {
     }
     context.strokeStyle = OUTLINE_COLOR; context.lineWidth = 0.8; context.strokeRect(0, 36, 80, 6);
     // Puerta.
-    round(34, 46, 20, 26, 6); fillOutlined(context, '#6a3c1c', '#3a1c0a', 46, 72, 1);
+    round(34, 46, 20, 26, 6); fillWithOutline(context, '#6a3c1c', '#3a1c0a', 46, 72, 1);
     round(37, 49, 14, 23, 4); context.fillStyle = '#1c0c06'; context.fill();
     context.fillStyle = '#ffd35a'; context.beginPath(); context.arc(49, 61, 0.9, 0, TAU); context.fill();
     // Ventana con botellas.
-    round(5, 48, 22, 16, 2); fillOutlined(context, '#bfe6ff', '#6aaee0', 48, 64, 1);
+    round(5, 48, 22, 16, 2); fillWithOutline(context, '#bfe6ff', '#6aaee0', 48, 64, 1);
     ['#2c9c3c', '#a8322c', '#2c9c3c', '#e8b848'].forEach((color, index) => { round(8 + index * 4.6, 54, 2.8, 9, 1.2); context.fillStyle = color; context.fill(); context.strokeStyle = OUTLINE_COLOR; context.lineWidth = 0.5; context.stroke(); });
     context.fillStyle = 'rgba(255,255,255,0.4)'; context.fillRect(6, 49, 5, 1);
     // Farol y maceta.
-    round(60, 48, 14, 14, 2); fillOutlined(context, '#6a3c1c', '#3a1c0a', 48, 62, 1);
-    round(62, 50, 10, 10, 1.4); fillOutlined(context, '#fff6c8', '#ffd870', 50, 60, 0.6);
+    round(60, 48, 14, 14, 2); fillWithOutline(context, '#6a3c1c', '#3a1c0a', 48, 62, 1);
+    round(62, 50, 10, 10, 1.4); fillWithOutline(context, '#fff6c8', '#ffd870', 50, 60, 0.6);
     context.fillStyle = '#b8603c'; context.fillRect(60, 66, 12, 6);
     context.fillStyle = '#ff5a7a'; context.beginPath(); context.arc(63, 65, 2, 0, TAU); context.arc(68, 64.4, 2, 0, TAU); context.fill();
   });
@@ -9884,7 +10037,7 @@ const __module_src_game_worldRenderer_js = (() => {
  */
 const { SCREEN_WIDTH, SCREEN_HEIGHT, TILE_SIZE, GROUND_SURFACE_Y, GROUND_TOP_ROW, RENDER_SCALE } = __module_src_config_constants_js;
 const { OUTLINE_COLOR } = __module_src_graphics_hd_js;
-const { fillRectangle } = __module_src_core_canvas_js;
+const { roundedPath, fillWithOutline } = __module_src_graphics_shapes_js;
 const { SPRITES, drawSprite } = __module_src_graphics_sprites_js;
 const { drawText, measureTextWidth } = __module_src_graphics_font_js;
 const { BACKGROUND_LAYER_WIDTH, PARALLAX_FACTORS } = __module_src_graphics_backgroundConstants_js;
@@ -9929,8 +10082,19 @@ function drawBackground(context, backgroundImages, theme, cameraX, fireworkParti
   if (backgroundImages.cloudLayer) drawRepeatingLayer(context, backgroundImages.cloudLayer, cameraX * 0.5 + stepCounter * 0.15, PARALLAX_FACTORS.farLayer * 0.6);
   drawRepeatingLayer(context, backgroundImages.farLayer, cameraX, PARALLAX_FACTORS.farLayer);
   for (const particle of fireworkParticles) {
-    const isFadingOut = particle.ageInSteps >= 30 && particle.ageInSteps % 4 >= 2;
-    fillRectangle(context, particle.x, particle.y, 2, 2, isFadingOut ? '#fcfcfc' : particle.color);
+    const fade = particle.ageInSteps >= 30 ? Math.max(0, 1 - (particle.ageInSteps - 30) / 24) : 1;
+    context.save();
+    context.globalCompositeOperation = 'lighter';
+    const gradient = context.createRadialGradient(particle.x, particle.y, 0, particle.x, particle.y, 6);
+    gradient.addColorStop(0, particle.color);
+    gradient.addColorStop(1, 'rgba(255,255,255,0)');
+    context.globalAlpha = 0.85 * fade;
+    context.fillStyle = gradient;
+    context.fillRect(particle.x - 6, particle.y - 6, 12, 12);
+    context.globalAlpha = fade;
+    context.fillStyle = '#ffffff';
+    context.fillRect(particle.x - 0.7, particle.y - 0.7, 1.4, 1.4);
+    context.restore();
   }
   drawRepeatingLayer(context, backgroundImages.midLayer, cameraX, PARALLAX_FACTORS.midLayer);
   drawRepeatingLayer(context, backgroundImages.nearLayer, cameraX, PARALLAX_FACTORS.nearLayer);
@@ -10099,26 +10263,6 @@ function chooseTileImage(tile, { tileMap, tileImages, theme, column, row, pingPo
 /* ------------------------------------------------------------------ */
 /* Decorados                                                           */
 /* ------------------------------------------------------------------ */
-
-/** Camino de un rectángulo con esquinas redondeadas (compatible con navegadores sin roundRect). */
-function roundedPath(context, x, y, width, height, radius) {
-  context.beginPath();
-  if (context.roundRect) context.roundRect(x, y, width, height, radius);
-  else context.rect(x, y, width, height);
-}
-
-/** Rellena con degradado vertical y dibuja el contorno oscuro del camino actual. */
-function fillWithOutline(context, topColor, bottomColor, top, bottom, lineWidth = 0.8) {
-  const gradient = context.createLinearGradient(0, top, 0, bottom);
-  gradient.addColorStop(0, topColor);
-  gradient.addColorStop(1, bottomColor);
-  context.fillStyle = gradient;
-  context.fill();
-  context.strokeStyle = OUTLINE_COLOR;
-  context.lineWidth = lineWidth;
-  context.lineJoin = 'round';
-  context.stroke();
-}
 
 /** Cartel de madera con texto clavado en el suelo. */
 function drawSign(context, screenX, text) {

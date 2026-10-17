@@ -1,8 +1,9 @@
 # Súper Paco: La Tortilla Perdida
 
-Juego de plataformas de 8 bits ambientado en España: 10 niveles (de Madrid al
-castillo de Hacienda), memes españoles, música chiptune original y un final
-que responde a la gran pregunta: ¿la tortilla lleva cebolla?
+Juego de plataformas ambientado en España con un acabado gráfico moderno en
+alta resolución: 10 niveles (de Madrid al castillo de Hacienda), memes
+españoles, música chiptune original y un final que responde a la gran
+pregunta: ¿la tortilla lleva cebolla?
 
 Todo el arte, la música y los niveles son originales y se generan con código:
 no hay imágenes ni sonidos externos.
@@ -42,8 +43,8 @@ SpanishMario/
 │   ├── config/
 │   │   └── constants.js     ← resolución, física de Paco, reglas de puntuación
 │   ├── core/                ← servicios genéricos, sin nada específico del juego
-│   │   ├── canvas.js        ← primitivas de dibujo pixelado
-│   │   ├── screen.js        ← canvas visible, escalado y pantalla completa
+│   │   ├── canvas.js        ← primitivas de dibujo y creación de lienzos
+│   │   ├── screen.js        ← canvas visible (alta resolución), escalado y pantalla completa
 │   │   ├── input.js         ← teclado, mando y táctil → botones lógicos
 │   │   ├── gameLoop.js      ← bucle de paso fijo (60 pasos/s en cualquier pantalla)
 │   │   ├── math.js          ← aleatorios con semilla, clamp, colisión de rectángulos
@@ -53,12 +54,19 @@ SpanishMario/
 │   │   ├── songs.js         ← partituras (datos)
 │   │   └── soundEngine.js   ← sintetizador, efectos de sonido y reproductor
 │   ├── graphics/
-│   │   ├── palette.js, spriteData.js  ← pixel art como texto (datos)
-│   │   ├── sprites.js       ← convierte los datos en imágenes y las dibuja
-│   │   ├── fontGlyphs.js, font.js     ← fuente bitmap 5×7 con ¡ ¿ Ñ y tildes
-│   │   ├── tileImages.js    ← baldosas de cada tema (adoquines, arena, azulejos…)
-│   │   ├── backgroundImages.js ← fondos con parallax de cada ciudad
-│   │   ├── decorationImages.js ← nubes, plantas, farolas y el bar de la meta
+│   │   ├── hd.js            ← de pixel art a alta resolución: Scale3x, luz, contorno
+│   │   ├── palette.js, spriteData.js  ← pixel art de enemigos y objetos como texto (datos)
+│   │   ├── sprites.js       ← convierte los datos en sprites HD y los dibuja (estirar/aplastar)
+│   │   ├── pacoArt.js       ← Paco dibujado con formas vectoriales y ciclos de animación
+│   │   ├── fontGlyphs.js, font.js     ← fuente 5×7 con ¡ ¿ Ñ y tildes, texto HD con contorno
+│   │   ├── tileImages.js    ← baldosas HD de cada tema (adoquines, arena, bloques, azulejos…)
+│   │   ├── backgroundKit.js, cityBackgrounds.js, backgroundImages.js ← fondos HD con parallax
+│   │   ├── backgroundConstants.js     ← anchura de las capas y velocidades de parallax
+│   │   ├── decorationImages.js ← plantas, farolas y el bar de la meta (vectoriales)
+│   │   ├── shapes.js        ← formas con contorno, degradado y resplandor compartidas
+│   │   ├── uiKit.js         ← paneles, fondos animados, cinta de la bandera, iris
+│   │   ├── screenFx.js      ← estado de temblor, destellos, zoom y congelación de golpes
+│   │   ├── postProcess.js   ← resplandor, contraste, tono de color y viñeta
 │   │   └── themeAssets.js   ← caché de gráficos por tema
 │   ├── world/               ← descripción de los niveles (datos + reglas del mapa)
 │   │   ├── tileTypes.js     ← tipos de baldosa y contenidos de bloques
@@ -86,6 +94,7 @@ SpanishMario/
 │       └── screens/         ← título, controles, historia, intro de nivel, fin, final
 ├── tests/                   ← tests automáticos (se ejecutan en Node, sin navegador)
 │   ├── gameData.test.js     ← datos: sprites, fuente, canciones y diseño de niveles
+│   ├── graphics.test.js     ← efectos de pantalla, posturas de Paco y fondos por ciudad
 │   ├── player.test.js       ← saltos, paredes, fosos, lava, tiempo, agacharse, pimientos
 │   ├── blocks.test.js       ← bloques ¿?, ladrillos, bloques ocultos y pesetas
 │   ├── enemies.test.js      ← pisotones, daño, caparazones, churros, toro, pulpo, madre
@@ -108,7 +117,7 @@ para jugar basta el navegador). La única dependencia es ESLint, para desarrollo
 npm install     # instala ESLint (solo la primera vez)
 npm run dev     # servidor en http://localhost:8080 (recarga el navegador tras editar)
 npm run lint    # análisis estático: variables sin definir, importaciones sin usar…
-npm test        # 91 tests automáticos (tardan menos de un segundo)
+npm test        # 99 tests automáticos (tardan menos de un segundo)
 npm run build   # genera dist/SuperPaco.html
 npm run check   # todo lo anterior seguido: úsalo antes de dar un cambio por bueno
 ```
@@ -116,6 +125,10 @@ npm run check   # todo lo anterior seguido: úsalo antes de dar un cambio por bu
 Añade `?debug` a la dirección del servidor de desarrollo
 (`http://localhost:8080/?debug`) para acceder al juego desde la consola del
 navegador mediante `window.superPacoDebug`.
+
+Con `?quality=0|1|2` se fuerza la calidad del acabado de imagen (0 = completo,
+1 = sin resplandor ni contraste, 2 = solo viñeta). Si no se indica, el juego
+baja de nivel solo cuando el equipo no llega a 40 fotogramas por segundo.
 
 ## Tests
 
@@ -135,6 +148,23 @@ no depende de la pantalla (ver la arquitectura más abajo).
 Lo que **no** comprueban los tests (hay que mirarlo a mano): el dibujo en
 pantalla, el sonido, la sensación de control, el táctil y el mando, y otros
 navegadores.
+
+## Cómo se dibuja
+
+El juego razona en coordenadas de 320×240, pero pinta sobre un lienzo de
+alta resolución (3 veces mayor, 960×720) y lo escala a la ventana con
+suavizado. Cada fotograma pasa por estas capas:
+
+1. **Escena** (`worldRenderer.js`, `World.draw`): cielo, nubes, tres capas de
+   fondo con parallax, decorados, baldosas con contorno, sombras suaves,
+   personajes, efectos, luz y marcador.
+2. **Acabado** (`postProcess.js`): temblor y "golpe" de zoom, resplandor,
+   contraste, tono de color de la ciudad, viñeta y destellos. La lógica del
+   juego pide efectos con `screenFx` (`shake`, `flash`, `hitStop`…).
+3. **Arte:** Paco y los fondos, decorados y bloques se pintan con formas
+   vectoriales; los enemigos y objetos siguen siendo pixel art como texto,
+   que `hd.js` convierte en sprites HD (ampliación Scale3x, luz de borde,
+   degradado y contorno grueso).
 
 ## Arquitectura en pocas palabras
 
@@ -173,7 +203,10 @@ navegadores.
   queda algún hueco imposible de saltar.
 - **Nuevo enemigo con un comportamiento existente:** añade sus sprites en
   `spriteData.js` (`<id>_frame1`, `<id>_frame2`, `<id>_squashed`) y una entrada
-  en `enemyCatalog.js`.
+  en `enemyCatalog.js`. El acabado HD (contorno, luz) se aplica solo.
+- **Nueva ciudad o retocar un fondo:** el dibujo de cada ciudad está en
+  `CITY_PAINTERS` (`cityBackgrounds.js`); sus colores y efectos (tono, luz,
+  viñeta) en `themes.js`.
 - **Nuevo comportamiento:** crea una clase que herede de `Enemy` en
   `src/entities/enemies/`, regístrala en `entityFactory.js` y añade sus
   tests en `tests/enemies.test.js`.

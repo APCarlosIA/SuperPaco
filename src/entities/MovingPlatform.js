@@ -3,7 +3,7 @@
  * vagones de metro, tablones…). Paco puede subirse encima y lo transporta.
  */
 import { TILE_SIZE } from '../config/constants.js';
-import { fillRectangle } from '../core/canvas.js';
+import { roundedPath, fillWithOutline } from '../graphics/shapes.js';
 import { Entity } from './Entity.js';
 
 const PLATFORM_THICKNESS = 8;
@@ -59,31 +59,54 @@ export class MovingPlatform extends Entity {
    * @param {number} cameraX
    */
   draw(context, cameraX) {
-    const x = Math.round(this.x - cameraX);
-    const y = Math.round(this.y);
+    const x = this.x - cameraX;
+    const y = this.y;
+    const width = this.width;
     switch (this.look) {
-      case 'inflatable': // Colchoneta hinchable de rayas.
-        for (let offset = 0; offset < this.width; offset += 8) fillRectangle(context, x + offset, y, 8, 7, (offset / 8) % 2 ? '#fcfcfc' : '#fc5ca8');
-        fillRectangle(context, x, y, this.width, 1, '#fcd0e8');
-        fillRectangle(context, x, y + 7, this.width, 1, '#a02c68');
+      case 'inflatable': { // Colchoneta hinchable de rayas.
+        roundedPath(context, x, y, width, 8, 4);
+        fillWithOutline(context, '#ff9acb', '#d83c88', y, y + 8, 0.9);
+        context.save();
+        roundedPath(context, x, y, width, 8, 4);
+        context.clip();
+        context.fillStyle = '#ffffff';
+        for (let offset = 4; offset < width; offset += 16) context.fillRect(x + offset, y, 8, 8);
+        context.fillStyle = 'rgba(255,255,255,0.45)';
+        context.fillRect(x + 3, y + 1, width - 6, 1.6);
+        context.restore();
         break;
-      case 'metroCar': // Techo de un vagón de metro.
-        fillRectangle(context, x, y, this.width, 8, '#e8e8f0');
-        fillRectangle(context, x, y + 3, this.width, 2, '#2c50c8');
-        fillRectangle(context, x, y + 7, this.width, 1, '#5c5c6c');
-        for (let offset = 6; offset < this.width - 6; offset += 12) fillRectangle(context, x + offset, y + 1, 6, 2, '#3c4458');
+      }
+      case 'metroCar': { // Techo de un vagón de metro.
+        roundedPath(context, x, y, width, 8, 2);
+        fillWithOutline(context, '#ffffff', '#b8bed0', y, y + 8, 0.9);
+        context.fillStyle = '#2c50c8';
+        context.fillRect(x + 1, y + 3, width - 2, 2);
+        context.fillStyle = '#fff2a8';
+        for (let offset = 5; offset < width - 8; offset += 12) { roundedPath(context, x + offset, y + 0.8, 6, 1.8, 0.8); context.fill(); }
         break;
-      case 'stone': // Losa de piedra con remaches.
-        fillRectangle(context, x, y, this.width, 8, '#6c6474');
-        fillRectangle(context, x, y, this.width, 1, '#a89cb0');
-        fillRectangle(context, x, y + 7, this.width, 1, '#2c2434');
-        for (let offset = 4; offset < this.width; offset += 8) fillRectangle(context, x + offset, y + 3, 2, 2, '#2c2434');
+      }
+      case 'stone': { // Losa de piedra con remaches.
+        roundedPath(context, x, y, width, 8, 1.6);
+        fillWithOutline(context, '#a89cb8', '#4a4258', y, y + 8, 0.9);
+        context.fillStyle = 'rgba(255,255,255,0.35)';
+        context.fillRect(x + 1, y + 0.8, width - 2, 0.8);
+        for (let offset = 4; offset < width; offset += 8) {
+          context.fillStyle = '#2c2434';
+          context.beginPath(); context.arc(x + offset, y + 4.4, 0.9, 0, Math.PI * 2); context.fill();
+        }
         break;
-      default: // Tablón de madera.
-        fillRectangle(context, x, y, this.width, 7, '#a0642c');
-        fillRectangle(context, x, y, this.width, 1, '#dca060');
-        fillRectangle(context, x, y + 7, this.width, 1, '#4c2c10');
-        for (let offset = 0; offset < this.width; offset += 16) fillRectangle(context, x + offset + 2, y + 3, 1, 1, '#4c2c10');
+      }
+      default: { // Tablón de madera.
+        roundedPath(context, x, y, width, 8, 1.6);
+        fillWithOutline(context, '#d49a58', '#8a5a28', y, y + 8, 0.9);
+        context.strokeStyle = 'rgba(70,36,10,0.45)';
+        context.lineWidth = 0.4;
+        for (const lineY of [2.6, 5]) { context.beginPath(); context.moveTo(x + 1, y + lineY); context.bezierCurveTo(x + width * 0.3, y + lineY - 0.7, x + width * 0.7, y + lineY + 0.7, x + width - 1, y + lineY); context.stroke(); }
+        context.fillStyle = '#3a2008';
+        for (let offset = 3; offset < width; offset += 16) { context.beginPath(); context.arc(x + offset, y + 4, 0.6, 0, Math.PI * 2); context.fill(); }
+        context.fillStyle = 'rgba(255,255,255,0.3)';
+        context.fillRect(x + 1.2, y + 0.9, width - 2.4, 0.7);
+      }
     }
   }
 }
