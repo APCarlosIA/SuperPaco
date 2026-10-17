@@ -25,6 +25,11 @@ export const screenFx = {
   vignette: 0.5,
   /** Fuerza del resplandor de las zonas brillantes (0 a 1). */
   bloom: 0.28,
+  /**
+   * Calidad del acabado de imagen: 0 = completo, 1 = sin resplandor ni contraste,
+   * 2 = solo viñeta. Baja sola en ordenadores lentos (ver main.js).
+   */
+  quality: 0,
 
   /**
    * Hace temblar la pantalla.

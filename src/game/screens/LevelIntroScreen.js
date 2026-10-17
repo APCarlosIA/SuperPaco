@@ -1,12 +1,13 @@
 /**
- * @file Pantalla negra que presenta el nivel: número, ciudad, frase y vidas.
+ * @file Pantalla que presenta el nivel: número, ciudad, frase y vidas, sobre un fondo con los colores de la ciudad.
  */
-import { SCREEN_WIDTH, SCREEN_HEIGHT } from '../../config/constants.js';
-import { fillRectangle } from '../../core/canvas.js';
+import { SCREEN_WIDTH } from '../../config/constants.js';
 import { soundEngine } from '../../audio/soundEngine.js';
 import { SPRITES, drawSprite } from '../../graphics/sprites.js';
 import { pacoSpriteName } from '../../graphics/spriteData.js';
 import { drawText } from '../../graphics/font.js';
+import { drawBackdrop, drawPanel } from '../../graphics/uiKit.js';
+import { THEMES } from '../../world/themes.js';
 import { LEVELS } from '../../world/levels.js';
 
 /** Pasos que se muestra antes de empezar el nivel automáticamente. */
@@ -34,12 +35,17 @@ export class LevelIntroScreen {
 
   draw(context) {
     const level = LEVELS[this.session.levelIndex];
-    fillRectangle(context, 0, 0, SCREEN_WIDTH, SCREEN_HEIGHT, '#000000');
-    drawText(context, `NIVEL ${this.session.levelIndex + 1}`, SCREEN_WIDTH / 2, 56, '#fcfcfc', { align: 'center', scale: 2 });
-    drawText(context, level.name, SCREEN_WIDTH / 2, 82, '#fcd800', { align: 'center', scale: 3 });
-    drawText(context, `"${level.subtitle}"`, SCREEN_WIDTH / 2, 118, '#8cc8fc', { align: 'center' });
-    drawSprite(context, SPRITES[pacoSpriteName('small', 'stand', 'normal')], 132, 148);
-    drawText(context, `×  ${this.session.lives}`, 156, 153, '#fcfcfc');
-    drawText(context, `PUNTOS ${String(this.session.score).padStart(6, '0')}`, SCREEN_WIDTH / 2, 196, '#9c9cb0', { align: 'center' });
+    const theme = THEMES[level.themeName] || THEMES.madrid;
+    drawBackdrop(context, this.stepCounter, { top: theme.skyColors[0], bottom: '#07040f', accent: theme.skyColors[2] });
+    const slide = Math.min(1, this.stepCounter / 14);
+    const ease = 1 - Math.pow(1 - slide, 3);
+    drawText(context, `NIVEL ${this.session.levelIndex + 1}`, SCREEN_WIDTH / 2, 50 - (1 - ease) * 30, '#ffffff', { align: 'center', scale: 2, outlineColor: '#140c20' });
+    drawText(context, level.name, SCREEN_WIDTH / 2 + (1 - ease) * 200, 78, '#ffd84a', { align: 'center', scale: 3, outlineColor: '#140c20' });
+    drawText(context, `"${level.subtitle}"`, SCREEN_WIDTH / 2, 118, '#bfe6ff', { align: 'center', shadowColor: '#140c20' });
+    drawPanel(context, 116, 140, 88, 30);
+    const bob = Math.abs(Math.sin(this.stepCounter / 7)) * 2;
+    drawSprite(context, SPRITES[pacoSpriteName('small', `run${(Math.floor(this.stepCounter / 3) % 8) + 1}`, 'normal')], 126, 147 - bob);
+    drawText(context, `×  ${this.session.lives}`, 152, 151, '#ffffff', { shadowColor: '#140c20', scale: 2 });
+    drawText(context, `PUNTOS ${String(this.session.score).padStart(6, '0')}`, SCREEN_WIDTH / 2, 196, '#c8c8e0', { align: 'center', shadowColor: '#140c20' });
   }
 }

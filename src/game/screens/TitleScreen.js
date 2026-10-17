@@ -8,12 +8,12 @@
  */
 import { SCREEN_WIDTH, TILE_SIZE, GROUND_SURFACE_Y } from '../../config/constants.js';
 import { BUTTON } from '../../core/input.js';
-import { fillRectangle } from '../../core/canvas.js';
 import { loadProgress } from '../../core/storage.js';
 import { soundEngine, SOUND_EFFECT } from '../../audio/soundEngine.js';
 import { SPRITES, drawSprite } from '../../graphics/sprites.js';
 import { pacoSpriteName } from '../../graphics/spriteData.js';
 import { drawText } from '../../graphics/font.js';
+import { drawPanel, drawFlagBanner } from '../../graphics/uiKit.js';
 import { getThemeAssets } from '../../graphics/themeAssets.js';
 import { LEVELS } from '../../world/levels.js';
 import { TITLE_TAGLINES } from '../../world/texts.js';
@@ -92,7 +92,7 @@ export class TitleScreen {
     this.drawLogo(context);
     this.drawMenu(context);
     this.drawWalkingCharacters(context);
-    drawText(context, TITLE_TAGLINES[this.taglineIndex], SCREEN_WIDTH / 2, 226, '#fcfcfc', { align: 'center', outlineColor: '#000000' });
+    drawText(context, TITLE_TAGLINES[this.taglineIndex], SCREEN_WIDTH / 2, 226, '#fcfcfc', { align: 'center', outlineColor: '#140c20' });
   }
 
   /** @private */
@@ -105,16 +105,17 @@ export class TitleScreen {
     }
   }
 
-  /** @private Logotipo sobre una franja roja y amarilla. */
+  /** @private Logotipo sobre una cinta ondulante con los colores de la bandera. */
   drawLogo(context) {
-    fillRectangle(context, 0, 26, SCREEN_WIDTH, 14, '#c8102e');
-    fillRectangle(context, 0, 40, SCREEN_WIDTH, 30, '#fcd800');
-    fillRectangle(context, 0, 70, SCREEN_WIDTH, 14, '#c8102e');
-    fillRectangle(context, 0, 25, SCREEN_WIDTH, 1, '#000000');
-    fillRectangle(context, 0, 84, SCREEN_WIDTH, 1, '#000000');
-    drawText(context, 'SÚPER PACO', SCREEN_WIDTH / 2, 45, '#c8102e', { align: 'center', scale: 3, outlineColor: '#000000' });
-    drawText(context, 'LA TORTILLA PERDIDA', SCREEN_WIDTH / 2, 92, '#fcfcfc', { align: 'center', scale: 2, outlineColor: '#000000' });
-    drawText(context, `RÉCORD ${String(this.highScore).padStart(6, '0')}`, SCREEN_WIDTH / 2, 112, '#fcd800', { align: 'center', shadowColor: '#000000' });
+    drawFlagBanner(context, 24, 62, this.stepCounter);
+    const bounce = Math.sin(this.stepCounter / 18) * 1.6;
+    context.save();
+    context.translate(SCREEN_WIDTH / 2, 55 + bounce);
+    context.rotate(Math.sin(this.stepCounter / 40) * 0.015);
+    drawText(context, 'SÚPER PACO', 0, -10, '#e4162f', { align: 'center', scale: 3, outlineColor: '#140c20' });
+    context.restore();
+    drawText(context, 'LA TORTILLA PERDIDA', SCREEN_WIDTH / 2, 94, '#ffffff', { align: 'center', scale: 2, outlineColor: '#140c20' });
+    drawText(context, `RÉCORD ${String(this.highScore).padStart(6, '0')}`, SCREEN_WIDTH / 2, 116, '#ffd84a', { align: 'center', outlineColor: '#140c20' });
   }
 
   /** @private */
@@ -124,23 +125,27 @@ export class TitleScreen {
       if (option === MENU_OPTION.CONTINUE) return `CONTINUAR  ◀ NIVEL ${this.continueLevelIndex + 1} ▶`;
       return 'CONTROLES';
     });
-    const lineHeight = 14;
-    context.fillStyle = 'rgba(8,6,20,0.6)';
-    context.fillRect(70, 126, 180, labels.length * lineHeight + 8);
-    const isCursorVisible = Math.floor(this.stepCounter / 16) % 2 === 1;
+    const lineHeight = 16;
+    drawPanel(context, 70, 128, 180, labels.length * lineHeight + 10);
     labels.forEach((label, index) => {
-      const y = 132 + index * lineHeight;
+      const y = 134 + index * lineHeight;
       const isSelected = index === this.selectedOptionIndex;
-      if (isSelected && isCursorVisible) drawText(context, '▶', 80, y, '#fcd800');
-      drawText(context, label, 92, y, isSelected ? '#fcd800' : '#fcfcfc');
+      if (isSelected) {
+        const pulse = 0.5 + 0.5 * Math.sin(this.stepCounter / 8);
+        context.fillStyle = `rgba(255, 216, 74, ${0.16 + pulse * 0.1})`;
+        context.fillRect(76, y - 3, 168, 13);
+        drawText(context, '▶', 80 + Math.sin(this.stepCounter / 6) * 1.5, y, '#ffd84a');
+      }
+      drawText(context, label, 92, y, isSelected ? '#ffd84a' : '#f4f0ff', { shadowColor: '#140c20' });
     });
   }
 
   /** @private Paco pasea por delante perseguido por un guiri. */
   drawWalkingCharacters(context) {
     const walkerX = ((this.stepCounter * 1.2) % (SCREEN_WIDTH + 60)) - 30;
-    const walkFrame = Math.floor(this.stepCounter / 8) % 2 ? 1 : 2;
-    drawSprite(context, SPRITES[pacoSpriteName('small', `walk${walkFrame}`, 'normal')], walkerX, GROUND_SURFACE_Y - 16);
-    drawSprite(context, SPRITES[`guiri_frame${walkFrame}`], walkerX - 60, GROUND_SURFACE_Y - 16, { mirrored: true });
+    const runFrame = (Math.floor(this.stepCounter / 3) % 8) + 1;
+    const guiriFrame = Math.floor(this.stepCounter / 8) % 2 ? 1 : 2;
+    drawSprite(context, SPRITES[pacoSpriteName('small', `run${runFrame}`, 'normal')], walkerX, GROUND_SURFACE_Y - 16);
+    drawSprite(context, SPRITES[`guiri_frame${guiriFrame}`], walkerX - 60, GROUND_SURFACE_Y - 16, { mirrored: true });
   }
 }

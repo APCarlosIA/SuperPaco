@@ -1,11 +1,11 @@
 /**
  * @file Historia inicial, escrita letra a letra como en las consolas clásicas.
  */
-import { SCREEN_WIDTH, SCREEN_HEIGHT } from '../../config/constants.js';
-import { fillRectangle } from '../../core/canvas.js';
+import { SCREEN_WIDTH } from '../../config/constants.js';
 import { soundEngine, SOUND_EFFECT } from '../../audio/soundEngine.js';
 import { SPRITES, drawSprite } from '../../graphics/sprites.js';
 import { drawText, measureTextWidth } from '../../graphics/font.js';
+import { drawBackdrop, drawPanel } from '../../graphics/uiKit.js';
 import { STORY_LINES } from '../../world/texts.js';
 
 /** Letras que aparecen por cada paso de simulación. */
@@ -32,7 +32,8 @@ export class StoryScreen {
   }
 
   draw(context) {
-    fillRectangle(context, 0, 0, SCREEN_WIDTH, SCREEN_HEIGHT, '#100c1c');
+    drawBackdrop(context, this.stepCounter, { top: '#2e1e5c', bottom: '#07040f' });
+    drawPanel(context, 14, 18, SCREEN_WIDTH - 28, STORY_LINES.length * 13 + 22);
     const lettersToShow = Math.floor(this.stepCounter * LETTERS_PER_STEP);
     let lettersBeforeThisLine = 0;
     STORY_LINES.forEach((line, index) => {
@@ -41,7 +42,7 @@ export class StoryScreen {
       const lineLeft = SCREEN_WIDTH / 2 - measureTextWidth(line) / 2;
       drawText(context, visiblePart, lineLeft, 30 + index * 13, index === HIGHLIGHTED_LINE_INDEX ? '#fcd800' : '#fcfcfc');
     });
-    drawSprite(context, SPRITES.tortilla, 152, 158);
+    drawSprite(context, SPRITES.tortilla, 152, 158 + Math.sin(this.stepCounter / 14) * 3);
     const hasFinishedWriting = lettersToShow > lettersBeforeThisLine;
     if (hasFinishedWriting) drawText(context, '¡VAMOS, QUE NOS VAMOS!', SCREEN_WIDTH / 2, 190, '#fcd800', { align: 'center' });
     if (this.stepCounter > INPUT_COOLDOWN_STEPS) {

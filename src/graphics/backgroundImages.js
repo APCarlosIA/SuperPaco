@@ -42,8 +42,8 @@ function paintSky(context, theme, random) {
   }
   if (theme.sun) {
     const { x, y, radius, color } = theme.sun;
-    glow(context, x, y, radius * 7, color, 0.5);
-    glow(context, x, y, radius * 3, '#ffffff', 0.35);
+    glow(context, x, y, radius * 4.5, color, 0.32);
+    glow(context, x, y, radius * 2.2, '#ffffff', 0.3);
     context.fillStyle = linearGradient(context, 0, y - radius, 0, y + radius, [[0, '#ffffff'], [1, color]]);
     context.beginPath(); context.arc(x, y, radius, 0, TAU); context.fill();
   }

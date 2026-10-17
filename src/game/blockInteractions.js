@@ -11,6 +11,7 @@
 import { TILE_SIZE, GAME_RULES } from '../config/constants.js';
 import { random, rectanglesOverlap } from '../core/math.js';
 import { soundEngine, SOUND_EFFECT } from '../audio/soundEngine.js';
+import { screenFx } from '../graphics/screenFx.js';
 import { TILE, BLOCK_CONTENT } from '../world/tileTypes.js';
 import { blockKey } from '../world/LevelBuilder.js';
 import { GAMEPLAY_MESSAGES } from '../world/texts.js';
@@ -114,6 +115,8 @@ function breakBrick(world, column, row) {
     const pieceY = row * TILE_SIZE + (index < 2 ? 1 : 9);
     world.spawnBrickDebris(pieceX, pieceY, velocityX, velocityY);
   });
+  world.spawnImpact(column * TILE_SIZE + 8, row * TILE_SIZE + 8, '#ffd6a0');
+  screenFx.shake(1.1, 7);
   soundEngine.playSoundEffect(SOUND_EFFECT.BRICK_BREAK);
   world.session.addPoints(GAME_RULES.pointsPerBrokenBrick);
 }

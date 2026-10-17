@@ -13,11 +13,38 @@ import { soundEngine } from './audio/soundEngine.js';
 import { buildFont } from './graphics/font.js';
 import { buildSprites, SPRITES } from './graphics/sprites.js';
 import { Game } from './game/Game.js';
+import { screenFx } from './graphics/screenFx.js';
 
 /** Identificador del `<canvas>` en `page.html`. */
 const CANVAS_ELEMENT_ID = 'game';
 /** Añadiendo "?debug" a la dirección, el juego queda accesible desde la consola para probarlo. */
 const IS_DEBUG_MODE = new URLSearchParams(window.location.search).has('debug');
+
+/** Calidad forzada con "?quality=0|1|2" (si no se indica, se ajusta sola). */
+const FORCED_QUALITY = new URLSearchParams(window.location.search).get('quality');
+/** Fotogramas que se miden antes de decidir si el equipo va justo. */
+const QUALITY_CHECK_FRAMES = 90;
+/** Si el fotograma medio tarda más de esto (ms), se baja la calidad un nivel. */
+const SLOW_FRAME_MILLISECONDS = 24;
+
+/** Baja la calidad del acabado de imagen si los fotogramas tardan demasiado. */
+function createQualityMonitor() {
+  let lastTimestamp = 0;
+  let measuredFrames = 0;
+  let totalMilliseconds = 0;
+  return function onFrame(timestamp) {
+    if (FORCED_QUALITY !== null) return;
+    if (lastTimestamp) {
+      totalMilliseconds += timestamp - lastTimestamp;
+      measuredFrames++;
+    }
+    lastTimestamp = timestamp;
+    if (measuredFrames < QUALITY_CHECK_FRAMES) return;
+    if (totalMilliseconds / measuredFrames > SLOW_FRAME_MILLISECONDS && screenFx.quality < 2) screenFx.quality++;
+    measuredFrames = 0;
+    totalMilliseconds = 0;
+  };
+}
 
 function startSuperPaco() {
   const screen = createGameScreen(CANVAS_ELEMENT_ID);
@@ -31,14 +58,17 @@ function startSuperPaco() {
 
   const game = new Game({ controls: input });
   game.start();
-  if (IS_DEBUG_MODE) window.superPacoDebug = { game, input, soundEngine, sprites: SPRITES };
+  if (IS_DEBUG_MODE) window.superPacoDebug = { game, input, soundEngine, sprites: SPRITES, screen, fx: screenFx };
 
+  if (FORCED_QUALITY !== null) screenFx.quality = Math.min(2, Math.max(0, Number(FORCED_QUALITY) || 0));
+  const monitorQuality = createQualityMonitor();
   startFixedStepGameLoop({
     update() {
       input.update();
       game.update();
     },
     render() {
+      monitorQuality(performance.now());
       game.draw(screen.beginFrame());
       screen.present();
     }

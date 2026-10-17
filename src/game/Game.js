@@ -17,6 +17,7 @@ import { toggleFullscreen } from '../core/screen.js';
 import { recordAchievement } from '../core/storage.js';
 import { soundEngine } from '../audio/soundEngine.js';
 import { screenFx } from '../graphics/screenFx.js';
+import { drawIrisOpening } from '../graphics/uiKit.js';
 import { LEVELS } from '../world/levels.js';
 import { GameSession } from './GameSession.js';
 import { World } from './World.js';
@@ -26,6 +27,9 @@ import { StoryScreen } from './screens/StoryScreen.js';
 import { LevelIntroScreen } from './screens/LevelIntroScreen.js';
 import { GameOverScreen } from './screens/GameOverScreen.js';
 import { EndingScreen } from './screens/EndingScreen.js';
+
+/** Pasos que tarda en abrirse el iris al cambiar de pantalla. */
+const IRIS_OPENING_STEPS = 26;
 
 export class Game {
   /**
@@ -39,6 +43,8 @@ export class Game {
     this.activeScreen = null;
     /** Pantalla del paso anterior, para reiniciar los efectos al cambiar de pantalla. */
     this.previousScreen = null;
+    /** Pasos desde el último cambio de pantalla (para la transición de iris). */
+    this.transitionSteps = IRIS_OPENING_STEPS;
   }
 
   /** Muestra la pantalla de título. */
@@ -53,7 +59,9 @@ export class Game {
     if (this.activeScreen !== this.previousScreen) {
       screenFx.reset();
       this.previousScreen = this.activeScreen;
+      this.transitionSteps = 0;
     }
+    this.transitionSteps++;
     screenFx.update();
     // Los golpes fuertes congelan la simulación unos fotogramas para dar peso.
     if (screenFx.consumeHitStop()) return;
@@ -66,6 +74,7 @@ export class Game {
    */
   draw(context) {
     this.activeScreen.draw(context);
+    drawIrisOpening(context, this.transitionSteps / IRIS_OPENING_STEPS);
   }
 
   /* ---------------- Transiciones ---------------- */

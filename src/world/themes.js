@@ -33,6 +33,10 @@
  * @property {boolean} [hasFireworks]
  * @property {boolean} [isNight]
  * @property {{x:number, y:number, radius:number, color:string}} [sun] Sol fijo en el cielo.
+ * @property {{color:string, alpha:number, mode:string}} [grade] Corrección de color del nivel.
+ * @property {number} [vignette] Oscurecimiento de los bordes (0 a 1).
+ * @property {number} [bloom] Resplandor de las zonas brillantes (0 a 1).
+ * @property {{darkness:number, color:string, playerLightRadius:number}} [lighting] Nivel con poca luz: solo se ve alrededor de las fuentes de luz.
  */
 
 /** @type {Object<string, Theme>} */
@@ -44,7 +48,8 @@ export const THEMES = Object.freeze({
     brickColors: { base: '#c85a2c', mortar: '#6c2410', highlight: '#ec8c64' },
     oneWayPlatform: { kind: 'balcony', primaryColor: '#e0d8c8', secondaryColor: '#6c6458', edgeColor: '#282828' },
     movingPlatformLook: 'wood',
-    hasClouds: true, groundPlant: 'arbusto', pitFilling: null
+    hasClouds: true, groundPlant: 'arbusto', pitFilling: null,
+    grade: { color: '#ffd9a0', alpha: 0.1, mode: 'soft-light' }
   },
   benidorm: {
     name: 'benidorm',
@@ -54,17 +59,19 @@ export const THEMES = Object.freeze({
     oneWayPlatform: { kind: 'awning', primaryColor: '#fc4c4c', secondaryColor: '#fcfcfc', edgeColor: '#a01818' },
     movingPlatformLook: 'inflatable',
     hasClouds: true, groundPlant: 'sombrilla', pitFilling: 'water',
-    sun: { x: 270, y: 40, radius: 14, color: '#fcf8d0' }
+    sun: { x: 270, y: 40, radius: 14, color: '#fcf8d0' },
+    grade: { color: '#7fd0ff', alpha: 0.08, mode: 'soft-light' }, bloom: 0.2
   },
   sevilla: {
     name: 'sevilla',
-    skyColors: ['#f8a040', '#f8bc60', '#fcd88c'],
+    skyColors: ['#e5683a', '#f2924e', '#f9c47e'],
     ground: { pattern: 'speckled', baseColor: '#e0a048', lightColor: '#f8c870', darkColor: '#b87028', mortarColor: '#985818', topLayer: 'albero' },
     brickColors: { base: '#c84c28', mortar: '#6c200c', highlight: '#f08058' },
     oneWayPlatform: { kind: 'awning', primaryColor: '#00a844', secondaryColor: '#fcfcfc', edgeColor: '#006020' },
     movingPlatformLook: 'wood',
     hasClouds: false, groundPlant: 'chumbera', pitFilling: null,
-    sun: { x: 64, y: 50, radius: 18, color: '#fcf4b0' }
+    sun: { x: 64, y: 50, radius: 18, color: '#fcf4b0' },
+    grade: { color: '#ff9a50', alpha: 0.16, mode: 'soft-light' }, bloom: 0.2
   },
   pamplona: {
     name: 'pamplona',
@@ -73,7 +80,8 @@ export const THEMES = Object.freeze({
     brickColors: { base: '#b85030', mortar: '#5c2010', highlight: '#e08060' },
     oneWayPlatform: { kind: 'plank', primaryColor: '#a06030', secondaryColor: '#6c3810', edgeColor: '#3c1c08' },
     movingPlatformLook: 'wood',
-    hasClouds: true, groundPlant: 'arbusto', pitFilling: null
+    hasClouds: true, groundPlant: 'arbusto', pitFilling: null,
+    grade: { color: '#ffe8c0', alpha: 0.06, mode: 'soft-light' }
   },
   metro: {
     name: 'metro',
@@ -82,7 +90,9 @@ export const THEMES = Object.freeze({
     brickColors: { base: '#b84c2c', mortar: '#4c1808', highlight: '#e07c58' },
     oneWayPlatform: { kind: 'plank', primaryColor: '#8c94a8', secondaryColor: '#4c5468', edgeColor: '#2c3040' },
     movingPlatformLook: 'metroCar',
-    hasClouds: false, groundPlant: null, pitFilling: null, hasCeiling: true
+    hasClouds: false, groundPlant: null, pitFilling: null, hasCeiling: true,
+    grade: { color: '#4a68ff', alpha: 0.2, mode: 'soft-light' }, vignette: 0.6,
+    lighting: { darkness: 0.3, color: '#04061a', playerLightRadius: 110 }
   },
   galicia: {
     name: 'galicia',
@@ -91,7 +101,8 @@ export const THEMES = Object.freeze({
     brickColors: { base: '#a85838', mortar: '#4c2010', highlight: '#d08868' },
     oneWayPlatform: { kind: 'plank', primaryColor: '#7c6048', secondaryColor: '#4c3828', edgeColor: '#2c2018' },
     movingPlatformLook: 'wood',
-    hasClouds: false, groundPlant: 'arbusto', pitFilling: 'water', hasRain: true
+    hasClouds: false, groundPlant: 'arbusto', pitFilling: 'water', hasRain: true,
+    grade: { color: '#8aa0b8', alpha: 0.22, mode: 'soft-light' }, vignette: 0.55
   },
   valencia: {
     name: 'valencia',
@@ -100,7 +111,8 @@ export const THEMES = Object.freeze({
     brickColors: { base: '#d8903c', mortar: '#6c3c10', highlight: '#fcc070' },
     oneWayPlatform: { kind: 'awning', primaryColor: '#fc8c00', secondaryColor: '#fcfcfc', edgeColor: '#a05000' },
     movingPlatformLook: 'wood',
-    hasClouds: false, groundPlant: 'naranjo', pitFilling: null, hasFireworks: true
+    hasClouds: false, groundPlant: 'naranjo', pitFilling: null, hasFireworks: true,
+    grade: { color: '#ff4a9a', alpha: 0.16, mode: 'soft-light' }, bloom: 0.34
   },
   mancha: {
     name: 'mancha',
@@ -109,7 +121,9 @@ export const THEMES = Object.freeze({
     brickColors: { base: '#a05030', mortar: '#401808', highlight: '#c87850' },
     oneWayPlatform: { kind: 'plank', primaryColor: '#a07040', secondaryColor: '#6c4420', edgeColor: '#3c2410' },
     movingPlatformLook: 'wood',
-    hasClouds: false, groundPlant: 'chumbera', pitFilling: null, isNight: true
+    hasClouds: false, groundPlant: 'chumbera', pitFilling: null, isNight: true,
+    grade: { color: '#3a4aff', alpha: 0.26, mode: 'soft-light' }, vignette: 0.6, bloom: 0.34,
+    lighting: { darkness: 0.28, color: '#02041a', playerLightRadius: 120 }
   },
   canarias: {
     name: 'canarias',
@@ -118,7 +132,8 @@ export const THEMES = Object.freeze({
     brickColors: { base: '#8c3c2c', mortar: '#3c1008', highlight: '#c86c50' },
     oneWayPlatform: { kind: 'plank', primaryColor: '#6c5c6c', secondaryColor: '#403444', edgeColor: '#201820' },
     movingPlatformLook: 'stone',
-    hasClouds: false, groundPlant: 'drago', pitFilling: 'lava'
+    hasClouds: false, groundPlant: 'drago', pitFilling: 'lava',
+    grade: { color: '#ff5a20', alpha: 0.18, mode: 'soft-light' }, bloom: 0.34
   },
   hacienda: {
     name: 'hacienda',
@@ -127,6 +142,8 @@ export const THEMES = Object.freeze({
     brickColors: { base: '#7c6c84', mortar: '#302838', highlight: '#a898b0' },
     oneWayPlatform: { kind: 'plank', primaryColor: '#8c8494', secondaryColor: '#4c4454', edgeColor: '#241c2c' },
     movingPlatformLook: 'stone',
-    hasClouds: false, groundPlant: null, pitFilling: 'lava', hasCeiling: true
+    hasClouds: false, groundPlant: null, pitFilling: 'lava', hasCeiling: true,
+    grade: { color: '#6a3aff', alpha: 0.2, mode: 'soft-light' }, vignette: 0.68, bloom: 0.34,
+    lighting: { darkness: 0.52, color: '#04020c', playerLightRadius: 96 }
   }
 });

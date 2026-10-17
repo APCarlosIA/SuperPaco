@@ -344,6 +344,11 @@ const screenFx = {
   vignette: 0.5,
   /** Fuerza del resplandor de las zonas brillantes (0 a 1). */
   bloom: 0.28,
+  /**
+   * Calidad del acabado de imagen: 0 = completo, 1 = sin resplandor ni contraste,
+   * 2 = solo viñeta. Baja sola en ordenadores lentos (ver main.js).
+   */
+  quality: 0,
 
   /**
    * Hace temblar la pantalla.
@@ -433,15 +438,19 @@ const HEIGHT = SCREEN_HEIGHT * RENDER_SCALE;
  */
 function createPostProcessor(displayCanvas, sceneCanvas) {
   const display = displayCanvas.getContext('2d', { alpha: false });
-  const bloomLarge = createCanvas(WIDTH / 4, HEIGHT / 4);
-  const bloomTemporary = createCanvas(WIDTH / 4, HEIGHT / 4);
-  const bloomSmall = createCanvas(WIDTH / 16, HEIGHT / 16);
-  const bloomLargeContext = bloomLarge.getContext('2d');
+  // Cadena de reducciones a la mitad: barata y sin saltos de calidad.
+  const bloomHalf = createCanvas(WIDTH / 2, HEIGHT / 2);
+  const bloomQuarter = createCanvas(WIDTH / 4, HEIGHT / 4);
+  const bloomEighth = createCanvas(WIDTH / 8, HEIGHT / 8);
+  const bloomTemporary = createCanvas(WIDTH / 8, HEIGHT / 8);
+  const bloomTiny = createCanvas(WIDTH / 16, HEIGHT / 16);
+  const bloomHalfContext = bloomHalf.getContext('2d');
+  const bloomQuarterContext = bloomQuarter.getContext('2d');
+  const bloomEighthContext = bloomEighth.getContext('2d');
   const bloomTemporaryContext = bloomTemporary.getContext('2d');
-  const bloomSmallContext = bloomSmall.getContext('2d');
-  for (const context of [bloomLargeContext, bloomTemporaryContext, bloomSmallContext]) {
+  const bloomTinyContext = bloomTiny.getContext('2d');
+  for (const context of [bloomHalfContext, bloomQuarterContext, bloomEighthContext, bloomTemporaryContext, bloomTinyContext]) {
     context.imageSmoothingEnabled = true;
-    context.imageSmoothingQuality = 'high';
   }
 
   const vignetteImage = createCanvas(WIDTH, HEIGHT, context => {
@@ -454,24 +463,29 @@ function createPostProcessor(displayCanvas, sceneCanvas) {
 
   /** Resplandor: se queda solo con lo muy brillante, lo difumina y lo suma encima. */
   function applyBloom(strength) {
-    bloomLargeContext.globalCompositeOperation = 'source-over';
-    bloomLargeContext.drawImage(sceneCanvas, 0, 0, bloomLarge.width, bloomLarge.height);
+    bloomHalfContext.drawImage(sceneCanvas, 0, 0, bloomHalf.width, bloomHalf.height);
+    bloomQuarterContext.drawImage(bloomHalf, 0, 0, bloomQuarter.width, bloomQuarter.height);
+    bloomEighthContext.globalCompositeOperation = 'source-over';
+    bloomEighthContext.drawImage(bloomQuarter, 0, 0, bloomEighth.width, bloomEighth.height);
     // Elevar al cuadrado (multiplicar consigo mismo) deja solo las zonas claras.
-    bloomTemporaryContext.drawImage(bloomLarge, 0, 0);
-    bloomLargeContext.globalCompositeOperation = 'multiply';
-    bloomLargeContext.drawImage(bloomTemporary, 0, 0);
-    bloomLargeContext.drawImage(bloomTemporary, 0, 0);
-    bloomLargeContext.drawImage(bloomTemporary, 0, 0);
-    bloomLargeContext.globalCompositeOperation = 'source-over';
-    bloomSmallContext.drawImage(bloomLarge, 0, 0, bloomSmall.width, bloomSmall.height);
+    bloomTemporaryContext.drawImage(bloomEighth, 0, 0);
+    bloomEighthContext.globalCompositeOperation = 'multiply';
+    bloomEighthContext.drawImage(bloomTemporary, 0, 0);
+    bloomEighthContext.drawImage(bloomTemporary, 0, 0);
+    bloomEighthContext.drawImage(bloomTemporary, 0, 0);
+    bloomEighthContext.globalCompositeOperation = 'source-over';
+    // Segundo nivel de desenfoque, sumado al primero en el lienzo pequeño.
+    bloomTinyContext.drawImage(bloomEighth, 0, 0, bloomTiny.width, bloomTiny.height);
+    bloomEighthContext.globalCompositeOperation = 'lighter';
+    bloomEighthContext.globalAlpha = 0.8;
+    bloomEighthContext.drawImage(bloomTiny, 0, 0, bloomEighth.width, bloomEighth.height);
+    bloomEighthContext.globalAlpha = 1;
+    bloomEighthContext.globalCompositeOperation = 'source-over';
     display.save();
     display.imageSmoothingEnabled = true;
-    display.imageSmoothingQuality = 'high';
     display.globalCompositeOperation = 'lighter';
-    display.globalAlpha = strength;
-    display.drawImage(bloomSmall, 0, 0, WIDTH, HEIGHT);
-    display.globalAlpha = strength * 0.7;
-    display.drawImage(bloomLarge, 0, 0, WIDTH, HEIGHT);
+    display.globalAlpha = strength * 1.6;
+    display.drawImage(bloomEighth, 0, 0, WIDTH, HEIGHT);
     display.restore();
   }
 
@@ -492,17 +506,19 @@ function createPostProcessor(displayCanvas, sceneCanvas) {
     display.drawImage(sceneCanvas, 0, 0);
     display.restore();
 
-    if (screenFx.bloom > 0) applyBloom(screenFx.bloom * 0.55);
+    if (screenFx.quality === 0 && screenFx.bloom > 0) applyBloom(screenFx.bloom * 0.55);
 
     // Contraste y saturación: mezclar la imagen consigo misma en modo "overlay".
-    display.save();
-    display.globalCompositeOperation = 'overlay';
-    display.globalAlpha = 0.22;
-    display.drawImage(sceneCanvas, 0, 0);
-    display.restore();
+    if (screenFx.quality === 0) {
+      display.save();
+      display.globalCompositeOperation = 'overlay';
+      display.globalAlpha = 0.22;
+      display.drawImage(sceneCanvas, 0, 0);
+      display.restore();
+    }
 
     const grade = screenFx.grade;
-    if (grade.alpha > 0) {
+    if (screenFx.quality < 2 && grade.alpha > 0) {
       display.save();
       display.globalCompositeOperation = grade.mode;
       display.globalAlpha = grade.alpha;
@@ -1896,7 +1912,7 @@ const __module_src_graphics_font_js = (() => {
  */
 const { RENDER_SCALE } = __module_src_config_constants_js;
 const { createCanvas } = __module_src_core_canvas_js;
-const { scale3x, addOutline } = __module_src_graphics_hd_js;
+const { addOutline } = __module_src_graphics_hd_js;
 const { GLYPH_BITMAPS, ACCENT_MARKS, ACCENTED_CHARACTERS, GLYPH_WIDTH } = __module_src_graphics_fontGlyphs_js;
 
 /** Ancho que ocupa cada carácter en pantalla (5 píxeles de letra + 1 de separación). */
@@ -1987,16 +2003,13 @@ function paintWhiteText(text) {
  * @private
  * @returns {{canvas: HTMLCanvasElement, padding: number}} `padding` en píxeles de alta resolución.
  */
-function createTextImage(text, color, scale, shadowColor, outlineColor) {
+function createTextImage(text, color, scale, shadowColor, outlineColor, outlineWidth) {
   const targetScale = RENDER_SCALE * scale;
   const white = paintWhiteText(text);
-  // Las letras pequeñas se amplían tal cual (así se leen mejor); los títulos grandes
-  // pasan por Scale3x para redondear las diagonales.
-  const enlarged = scale > 1 ? scale3x(white) : white;
+  // Las letras se amplían tal cual: así cada letra mantiene su forma y se lee bien.
   const fill = createCanvas(white.width * targetScale, white.height * targetScale, context => {
-    context.imageSmoothingEnabled = scale > 1;
-    context.imageSmoothingQuality = 'high';
-    context.drawImage(enlarged, 0, 0, white.width * targetScale, white.height * targetScale);
+    context.imageSmoothingEnabled = false;
+    context.drawImage(white, 0, 0, white.width * targetScale, white.height * targetScale);
     const gradient = context.createLinearGradient(0, ACCENT_ROWS * targetScale, 0, (ACCENT_ROWS + 7) * targetScale);
     gradient.addColorStop(0, shiftColor(color, 0.3));
     gradient.addColorStop(0.5, color);
@@ -2006,7 +2019,7 @@ function createTextImage(text, color, scale, shadowColor, outlineColor) {
     context.fillRect(0, 0, white.width * targetScale, white.height * targetScale);
   });
 
-  const outlineThickness = outlineColor ? Math.max(2, Math.round(targetScale * 0.85)) : 0;
+  const outlineThickness = outlineColor ? (outlineWidth || Math.max(2, Math.round(targetScale * 0.85))) : 0;
   const shadowOffset = shadowColor ? Math.max(2, Math.round(targetScale * 0.9)) : 0;
   const padding = Math.max(outlineThickness, 0) + (shadowOffset ? 1 : 0);
   const body = outlineColor ? addOutline(fill, outlineThickness, outlineColor) : fill;
@@ -2027,12 +2040,12 @@ function createTextImage(text, color, scale, shadowColor, outlineColor) {
 }
 
 /** Devuelve (y guarda en caché) la imagen de un texto con su estilo. */
-function getTextImage(text, color, scale, shadowColor, outlineColor) {
-  const cacheKey = `${text}|${color}|${scale}|${shadowColor || ''}|${outlineColor || ''}`;
+function getTextImage(text, color, scale, shadowColor, outlineColor, outlineWidth) {
+  const cacheKey = `${text}|${color}|${scale}|${shadowColor || ''}|${outlineColor || ''}|${outlineWidth || ''}`;
   let image = textImageCache.get(cacheKey);
   if (!image) {
     if (textImageCache.size >= MAX_CACHED_TEXT_IMAGES) textImageCache.clear();
-    image = createTextImage(text, color, scale, shadowColor, outlineColor);
+    image = createTextImage(text, color, scale, shadowColor, outlineColor, outlineWidth);
     textImageCache.set(cacheKey, image);
   }
   return image;
@@ -2052,14 +2065,15 @@ function getTextImage(text, color, scale, shadowColor, outlineColor) {
  * @param {number} [options.scale] Ampliación (2 = letras el doble de grandes).
  * @param {string} [options.shadowColor] Si se indica, dibuja una sombra desplazada.
  * @param {string} [options.outlineColor] Si se indica, dibuja un contorno alrededor.
+ * @param {number} [options.outlineWidth] Grosor del contorno en píxeles de pantalla (por defecto, proporcional al tamaño).
  */
-function drawText(context, text, x, y, color = '#fcfcfc', { align = 'left', scale = 1, shadowColor, outlineColor } = {}) {
+function drawText(context, text, x, y, color = '#fcfcfc', { align = 'left', scale = 1, shadowColor, outlineColor, outlineWidth } = {}) {
   const upperText = String(text).toUpperCase();
   if (!upperText.length) return;
   let left = x;
   if (align === 'center') left = x - measureTextWidth(upperText, scale) / 2;
   else if (align === 'right') left = x - measureTextWidth(upperText, scale);
-  const { canvas, padding } = getTextImage(upperText, color, scale, shadowColor, outlineColor);
+  const { canvas, padding } = getTextImage(upperText, color, scale, shadowColor, outlineColor, outlineWidth);
   const snappedLeft = Math.round(left * RENDER_SCALE) / RENDER_SCALE;
   const snappedTop = Math.round(y * RENDER_SCALE) / RENDER_SCALE;
   context.drawImage(
@@ -3180,6 +3194,163 @@ function recordAchievement({ unlockedLevel = 0, score = 0 }) {
 return { loadProgress, saveProgress, recordAchievement };
 })();
 
+// ─── src/graphics/uiKit.js ───
+const __module_src_graphics_uiKit_js = (() => {
+/**
+ * @file Elementos de interfaz con acabado moderno: paneles de cristal,
+ * fondos animados, cinta con la bandera, título con rebote y la transición
+ * de iris al cambiar de pantalla.
+ */
+const { SCREEN_WIDTH, SCREEN_HEIGHT } = __module_src_config_constants_js;
+const { OUTLINE_COLOR } = __module_src_graphics_hd_js;
+
+const TAU = Math.PI * 2;
+
+/** Camino de un rectángulo con esquinas redondeadas. */
+function roundedPath(context, x, y, width, height, radius) {
+  context.beginPath();
+  if (context.roundRect) context.roundRect(x, y, width, height, radius);
+  else context.rect(x, y, width, height);
+}
+
+/**
+ * Panel translúcido tipo cristal con borde y reflejo.
+ * @param {CanvasRenderingContext2D} context
+ * @param {number} x
+ * @param {number} y
+ * @param {number} width
+ * @param {number} height
+ * @param {Object} [options]
+ * @param {number} [options.radius]
+ * @param {string} [options.top] Color de arriba.
+ * @param {string} [options.bottom] Color de abajo.
+ * @param {string} [options.border] Color del borde claro.
+ */
+function drawPanel(context, x, y, width, height, { radius = 5, top = 'rgba(52,42,96,0.88)', bottom = 'rgba(14,9,36,0.92)', border = 'rgba(255,255,255,0.28)' } = {}) {
+  roundedPath(context, x, y, width, height, radius);
+  const gradient = context.createLinearGradient(0, y, 0, y + height);
+  gradient.addColorStop(0, top);
+  gradient.addColorStop(1, bottom);
+  context.fillStyle = gradient;
+  context.fill();
+  context.strokeStyle = OUTLINE_COLOR;
+  context.lineWidth = 1.2;
+  context.stroke();
+  roundedPath(context, x + 0.9, y + 0.9, width - 1.8, height - 1.8, Math.max(1, radius - 1));
+  context.strokeStyle = border;
+  context.lineWidth = 0.5;
+  context.stroke();
+  context.fillStyle = 'rgba(255,255,255,0.08)';
+  roundedPath(context, x + 1.5, y + 1.5, width - 3, height * 0.38, Math.max(1, radius - 1.5));
+  context.fill();
+}
+
+/**
+ * Fondo de pantalla animado: degradado oscuro con motas de luz que flotan.
+ * @param {CanvasRenderingContext2D} context
+ * @param {number} stepCounter
+ * @param {{top?: string, bottom?: string, accent?: string}} [palette]
+ */
+function drawBackdrop(context, stepCounter, { top = '#241a4a', bottom = '#07040f', accent = '#ffd84a' } = {}) {
+  const gradient = context.createLinearGradient(0, 0, 0, SCREEN_HEIGHT);
+  gradient.addColorStop(0, top);
+  gradient.addColorStop(1, bottom);
+  context.fillStyle = gradient;
+  context.fillRect(0, 0, SCREEN_WIDTH, SCREEN_HEIGHT);
+  context.save();
+  context.globalCompositeOperation = 'lighter';
+  for (let mote = 0; mote < 46; mote++) {
+    const speed = 0.08 + (mote % 5) * 0.035;
+    const x = (mote * 53.3 + stepCounter * speed) % (SCREEN_WIDTH + 24) - 12;
+    const y = (mote * 37.7 + Math.sin(stepCounter / 70 + mote) * 9) % SCREEN_HEIGHT;
+    const radius = 1.2 + (mote % 4) * 0.9;
+    const pulse = 0.5 + 0.5 * Math.sin(stepCounter / 30 + mote * 1.7);
+    const glow = context.createRadialGradient(x, y, 0, x, y, radius * 4);
+    glow.addColorStop(0, mote % 3 ? `rgba(255,255,255,${0.35 * pulse})` : hexToRgba(accent, 0.5 * pulse));
+    glow.addColorStop(1, 'rgba(255,255,255,0)');
+    context.fillStyle = glow;
+    context.fillRect(x - radius * 4, y - radius * 4, radius * 8, radius * 8);
+  }
+  context.restore();
+  const vignette = context.createRadialGradient(SCREEN_WIDTH / 2, SCREEN_HEIGHT / 2, SCREEN_HEIGHT * 0.3, SCREEN_WIDTH / 2, SCREEN_HEIGHT / 2, SCREEN_HEIGHT * 0.95);
+  vignette.addColorStop(0, 'rgba(0,0,0,0)');
+  vignette.addColorStop(1, 'rgba(0,0,0,0.5)');
+  context.fillStyle = vignette;
+  context.fillRect(0, 0, SCREEN_WIDTH, SCREEN_HEIGHT);
+}
+
+/** Convierte "#rrggbb" y una opacidad en un color CSS rgba. */
+function hexToRgba(color, opacity) {
+  const channels = [1, 3, 5].map(index => parseInt(color.slice(index, index + 2), 16));
+  return `rgba(${channels[0]},${channels[1]},${channels[2]},${opacity})`;
+}
+
+/**
+ * Cinta ondulante con los colores de la bandera de España.
+ * @param {CanvasRenderingContext2D} context
+ * @param {number} top Borde superior de la cinta.
+ * @param {number} height Alto de la cinta.
+ * @param {number} stepCounter
+ */
+function drawFlagBanner(context, top, height, stepCounter) {
+  const waveAt = x => Math.sin(stepCounter / 28 + x / 38) * 2.2;
+  const bandPath = (from, to) => {
+    context.beginPath();
+    for (let x = 0; x <= SCREEN_WIDTH; x += 4) context.lineTo(x, top + from * height + waveAt(x));
+    for (let x = SCREEN_WIDTH; x >= 0; x -= 4) context.lineTo(x, top + to * height + waveAt(x));
+    context.closePath();
+  };
+  // Sombra bajo la cinta.
+  context.save();
+  context.translate(0, 3);
+  bandPath(0, 1);
+  context.fillStyle = 'rgba(0,0,0,0.35)';
+  context.fill();
+  context.restore();
+  for (const [from, to, color, light] of [[0, 0.25, '#c8102e', '#ff4a5a'], [0.25, 0.75, '#ffc400', '#fff07a'], [0.75, 1, '#c8102e', '#8a0a20']]) {
+    bandPath(from, to);
+    const gradient = context.createLinearGradient(0, top + from * height, 0, top + to * height);
+    gradient.addColorStop(0, light);
+    gradient.addColorStop(0.4, color);
+    gradient.addColorStop(1, color);
+    context.fillStyle = gradient;
+    context.fill();
+  }
+  context.strokeStyle = OUTLINE_COLOR;
+  context.lineWidth = 1.4;
+  bandPath(0, 1);
+  context.stroke();
+  // Brillo que recorre la cinta.
+  const shineX = ((stepCounter * 2.4) % (SCREEN_WIDTH + 160)) - 80;
+  const shine = context.createLinearGradient(shineX - 30, 0, shineX + 30, 0);
+  shine.addColorStop(0, 'rgba(255,255,255,0)');
+  shine.addColorStop(0.5, 'rgba(255,255,255,0.28)');
+  shine.addColorStop(1, 'rgba(255,255,255,0)');
+  bandPath(0, 1);
+  context.fillStyle = shine;
+  context.fill();
+}
+
+/**
+ * Transición de iris: la pantalla se abre desde el centro como un círculo.
+ * @param {CanvasRenderingContext2D} context
+ * @param {number} progress De 0 (todo negro) a 1 (todo visible).
+ */
+function drawIrisOpening(context, progress) {
+  if (progress >= 1) return;
+  const eased = 1 - Math.pow(1 - progress, 3);
+  const maxRadius = Math.hypot(SCREEN_WIDTH, SCREEN_HEIGHT) / 2;
+  context.save();
+  context.beginPath();
+  context.rect(0, 0, SCREEN_WIDTH, SCREEN_HEIGHT);
+  context.arc(SCREEN_WIDTH / 2, SCREEN_HEIGHT / 2, Math.max(0.01, eased * maxRadius), 0, TAU, true);
+  context.fillStyle = '#07040f';
+  context.fill('evenodd');
+  context.restore();
+}
+return { drawPanel, drawBackdrop, drawFlagBanner, drawIrisOpening };
+})();
+
 // ─── src/core/math.js ───
 const __module_src_core_math_js = (() => {
 /**
@@ -3473,6 +3644,10 @@ const __module_src_world_themes_js = (() => {
  * @property {boolean} [hasFireworks]
  * @property {boolean} [isNight]
  * @property {{x:number, y:number, radius:number, color:string}} [sun] Sol fijo en el cielo.
+ * @property {{color:string, alpha:number, mode:string}} [grade] Corrección de color del nivel.
+ * @property {number} [vignette] Oscurecimiento de los bordes (0 a 1).
+ * @property {number} [bloom] Resplandor de las zonas brillantes (0 a 1).
+ * @property {{darkness:number, color:string, playerLightRadius:number}} [lighting] Nivel con poca luz: solo se ve alrededor de las fuentes de luz.
  */
 
 /** @type {Object<string, Theme>} */
@@ -3484,7 +3659,8 @@ const THEMES = Object.freeze({
     brickColors: { base: '#c85a2c', mortar: '#6c2410', highlight: '#ec8c64' },
     oneWayPlatform: { kind: 'balcony', primaryColor: '#e0d8c8', secondaryColor: '#6c6458', edgeColor: '#282828' },
     movingPlatformLook: 'wood',
-    hasClouds: true, groundPlant: 'arbusto', pitFilling: null
+    hasClouds: true, groundPlant: 'arbusto', pitFilling: null,
+    grade: { color: '#ffd9a0', alpha: 0.1, mode: 'soft-light' }
   },
   benidorm: {
     name: 'benidorm',
@@ -3494,17 +3670,19 @@ const THEMES = Object.freeze({
     oneWayPlatform: { kind: 'awning', primaryColor: '#fc4c4c', secondaryColor: '#fcfcfc', edgeColor: '#a01818' },
     movingPlatformLook: 'inflatable',
     hasClouds: true, groundPlant: 'sombrilla', pitFilling: 'water',
-    sun: { x: 270, y: 40, radius: 14, color: '#fcf8d0' }
+    sun: { x: 270, y: 40, radius: 14, color: '#fcf8d0' },
+    grade: { color: '#7fd0ff', alpha: 0.08, mode: 'soft-light' }, bloom: 0.2
   },
   sevilla: {
     name: 'sevilla',
-    skyColors: ['#f8a040', '#f8bc60', '#fcd88c'],
+    skyColors: ['#e5683a', '#f2924e', '#f9c47e'],
     ground: { pattern: 'speckled', baseColor: '#e0a048', lightColor: '#f8c870', darkColor: '#b87028', mortarColor: '#985818', topLayer: 'albero' },
     brickColors: { base: '#c84c28', mortar: '#6c200c', highlight: '#f08058' },
     oneWayPlatform: { kind: 'awning', primaryColor: '#00a844', secondaryColor: '#fcfcfc', edgeColor: '#006020' },
     movingPlatformLook: 'wood',
     hasClouds: false, groundPlant: 'chumbera', pitFilling: null,
-    sun: { x: 64, y: 50, radius: 18, color: '#fcf4b0' }
+    sun: { x: 64, y: 50, radius: 18, color: '#fcf4b0' },
+    grade: { color: '#ff9a50', alpha: 0.16, mode: 'soft-light' }, bloom: 0.2
   },
   pamplona: {
     name: 'pamplona',
@@ -3513,7 +3691,8 @@ const THEMES = Object.freeze({
     brickColors: { base: '#b85030', mortar: '#5c2010', highlight: '#e08060' },
     oneWayPlatform: { kind: 'plank', primaryColor: '#a06030', secondaryColor: '#6c3810', edgeColor: '#3c1c08' },
     movingPlatformLook: 'wood',
-    hasClouds: true, groundPlant: 'arbusto', pitFilling: null
+    hasClouds: true, groundPlant: 'arbusto', pitFilling: null,
+    grade: { color: '#ffe8c0', alpha: 0.06, mode: 'soft-light' }
   },
   metro: {
     name: 'metro',
@@ -3522,7 +3701,9 @@ const THEMES = Object.freeze({
     brickColors: { base: '#b84c2c', mortar: '#4c1808', highlight: '#e07c58' },
     oneWayPlatform: { kind: 'plank', primaryColor: '#8c94a8', secondaryColor: '#4c5468', edgeColor: '#2c3040' },
     movingPlatformLook: 'metroCar',
-    hasClouds: false, groundPlant: null, pitFilling: null, hasCeiling: true
+    hasClouds: false, groundPlant: null, pitFilling: null, hasCeiling: true,
+    grade: { color: '#4a68ff', alpha: 0.2, mode: 'soft-light' }, vignette: 0.6,
+    lighting: { darkness: 0.3, color: '#04061a', playerLightRadius: 110 }
   },
   galicia: {
     name: 'galicia',
@@ -3531,7 +3712,8 @@ const THEMES = Object.freeze({
     brickColors: { base: '#a85838', mortar: '#4c2010', highlight: '#d08868' },
     oneWayPlatform: { kind: 'plank', primaryColor: '#7c6048', secondaryColor: '#4c3828', edgeColor: '#2c2018' },
     movingPlatformLook: 'wood',
-    hasClouds: false, groundPlant: 'arbusto', pitFilling: 'water', hasRain: true
+    hasClouds: false, groundPlant: 'arbusto', pitFilling: 'water', hasRain: true,
+    grade: { color: '#8aa0b8', alpha: 0.22, mode: 'soft-light' }, vignette: 0.55
   },
   valencia: {
     name: 'valencia',
@@ -3540,7 +3722,8 @@ const THEMES = Object.freeze({
     brickColors: { base: '#d8903c', mortar: '#6c3c10', highlight: '#fcc070' },
     oneWayPlatform: { kind: 'awning', primaryColor: '#fc8c00', secondaryColor: '#fcfcfc', edgeColor: '#a05000' },
     movingPlatformLook: 'wood',
-    hasClouds: false, groundPlant: 'naranjo', pitFilling: null, hasFireworks: true
+    hasClouds: false, groundPlant: 'naranjo', pitFilling: null, hasFireworks: true,
+    grade: { color: '#ff4a9a', alpha: 0.16, mode: 'soft-light' }, bloom: 0.34
   },
   mancha: {
     name: 'mancha',
@@ -3549,7 +3732,9 @@ const THEMES = Object.freeze({
     brickColors: { base: '#a05030', mortar: '#401808', highlight: '#c87850' },
     oneWayPlatform: { kind: 'plank', primaryColor: '#a07040', secondaryColor: '#6c4420', edgeColor: '#3c2410' },
     movingPlatformLook: 'wood',
-    hasClouds: false, groundPlant: 'chumbera', pitFilling: null, isNight: true
+    hasClouds: false, groundPlant: 'chumbera', pitFilling: null, isNight: true,
+    grade: { color: '#3a4aff', alpha: 0.26, mode: 'soft-light' }, vignette: 0.6, bloom: 0.34,
+    lighting: { darkness: 0.28, color: '#02041a', playerLightRadius: 120 }
   },
   canarias: {
     name: 'canarias',
@@ -3558,7 +3743,8 @@ const THEMES = Object.freeze({
     brickColors: { base: '#8c3c2c', mortar: '#3c1008', highlight: '#c86c50' },
     oneWayPlatform: { kind: 'plank', primaryColor: '#6c5c6c', secondaryColor: '#403444', edgeColor: '#201820' },
     movingPlatformLook: 'stone',
-    hasClouds: false, groundPlant: 'drago', pitFilling: 'lava'
+    hasClouds: false, groundPlant: 'drago', pitFilling: 'lava',
+    grade: { color: '#ff5a20', alpha: 0.18, mode: 'soft-light' }, bloom: 0.34
   },
   hacienda: {
     name: 'hacienda',
@@ -3567,7 +3753,9 @@ const THEMES = Object.freeze({
     brickColors: { base: '#7c6c84', mortar: '#302838', highlight: '#a898b0' },
     oneWayPlatform: { kind: 'plank', primaryColor: '#8c8494', secondaryColor: '#4c4454', edgeColor: '#241c2c' },
     movingPlatformLook: 'stone',
-    hasClouds: false, groundPlant: null, pitFilling: 'lava', hasCeiling: true
+    hasClouds: false, groundPlant: null, pitFilling: 'lava', hasCeiling: true,
+    grade: { color: '#6a3aff', alpha: 0.2, mode: 'soft-light' }, vignette: 0.68, bloom: 0.34,
+    lighting: { darkness: 0.52, color: '#04020c', playerLightRadius: 96 }
   }
 });
 return { THEMES };
@@ -4655,70 +4843,125 @@ const __module_src_graphics_tileImages_js = (() => {
  * de los colores del tema (adoquines de Madrid, arena de Benidorm, albero de
  * Sevilla…). Se dibujan una vez por tema y luego solo se copian.
  */
-const { TILE_SIZE } = __module_src_config_constants_js;
-const { createCanvas, fillRectangle, fillTriangle } = __module_src_core_canvas_js;
+const { TILE_SIZE, RENDER_SCALE } = __module_src_config_constants_js;
+const { createCanvas, fillRectangle } = __module_src_core_canvas_js;
 const { createSeededRandom } = __module_src_core_math_js;
 const { scale3x } = __module_src_graphics_hd_js;
-
-/** Número de fotogramas de las animaciones de bloques, lava y agua. */
-const TILE_ANIMATION_FRAMES = 4;
+const { drawText } = __module_src_graphics_font_js;
 
 /* ------------------------------------------------------------------ */
-/* Suelo                                                               */
+/* Suelo (se pinta en alta resolución, en píxeles lógicos con decimales) */
 /* ------------------------------------------------------------------ */
 
-/** Adoquines: piedras de 8×8 desplazadas medio adoquín en cada hilera. */
-function paintCobblestones(context, style) {
-  fillRectangle(context, 0, 0, TILE_SIZE, TILE_SIZE, style.mortarColor);
+/** Crea una baldosa de alta resolución y deja pintar en coordenadas lógicas. */
+function createHdTile(width, height, paint) {
+  return createCanvas(width * RENDER_SCALE, height * RENDER_SCALE, context => {
+    context.scale(RENDER_SCALE, RENDER_SCALE);
+    context.imageSmoothingEnabled = true;
+    paint(context);
+  });
+}
+
+/** Rectángulo redondeado relleno con degradado de luz arriba-izquierda y contorno fino. */
+function paintStone(context, x, y, width, height, radius, style, tone = 0) {
+  context.beginPath();
+  context.roundRect ? context.roundRect(x, y, width, height, radius) : context.rect(x, y, width, height);
+  const gradient = context.createLinearGradient(x, y, x + width * 0.6, y + height);
+  gradient.addColorStop(0, shiftHex(style.lightColor, tone));
+  gradient.addColorStop(0.45, shiftHex(style.baseColor, tone));
+  gradient.addColorStop(1, shiftHex(style.darkColor, tone));
+  context.fillStyle = gradient;
+  context.fill();
+  context.strokeStyle = style.mortarColor;
+  context.lineWidth = 0.55;
+  context.stroke();
+  context.fillStyle = 'rgba(255,255,255,0.26)';
+  context.fillRect(x + radius * 0.6, y + 0.35, width - radius * 1.2, 0.55);
+}
+
+/** Aclara u oscurece un color #rrggbb (amount entre -1 y 1). */
+function shiftHex(color, amount) {
+  if (!amount) return color;
+  const channels = [1, 3, 5].map(index => parseInt(color.slice(index, index + 2), 16));
+  const shifted = channels.map(value => Math.round(amount > 0 ? value + (255 - value) * amount : value * (1 + amount)));
+  return `rgb(${shifted.join(',')})`;
+}
+
+/** Adoquines: piedras redondeadas de 8×8 desplazadas medio adoquín en cada hilera. */
+function paintCobblestones(context, style, randomSource) {
+  context.fillStyle = style.mortarColor;
+  context.fillRect(0, 0, TILE_SIZE, TILE_SIZE);
   for (let courseIndex = 0; courseIndex < 2; courseIndex++) {
     const horizontalOffset = courseIndex ? 4 : 0;
     for (let stoneIndex = -1; stoneIndex < 3; stoneIndex++) {
-      const left = stoneIndex * 8 + horizontalOffset;
-      const top = courseIndex * 8;
-      fillRectangle(context, left + 1, top + 1, 6, 6, style.baseColor);
-      fillRectangle(context, left + 1, top + 1, 5, 1, style.lightColor);
-      fillRectangle(context, left + 1, top + 1, 1, 5, style.lightColor);
-      fillRectangle(context, left + 2, top + 6, 5, 1, style.darkColor);
-      fillRectangle(context, left + 6, top + 2, 1, 5, style.darkColor);
+      const tone = (randomSource() - 0.5) * 0.14;
+      paintStone(context, stoneIndex * 8 + horizontalOffset + 0.55, courseIndex * 8 + 0.55, 6.9, 6.9, 2.2, style, tone);
     }
   }
 }
 
-/** Sillares de piedra de 16×8 con juntas y alguna mancha. */
+/** Sillares de piedra con juntas, grietas y motas. */
 function paintStoneBlocks(context, style, randomSource) {
-  fillRectangle(context, 0, 0, 16, 16, style.baseColor);
-  fillRectangle(context, 0, 7, 16, 1, style.mortarColor);
-  fillRectangle(context, 0, 15, 16, 1, style.mortarColor);
-  fillRectangle(context, 11, 0, 1, 7, style.mortarColor);
-  fillRectangle(context, 4, 8, 1, 7, style.mortarColor);
-  fillRectangle(context, 0, 0, 11, 1, style.lightColor);
-  fillRectangle(context, 12, 0, 4, 1, style.lightColor);
-  fillRectangle(context, 0, 8, 4, 1, style.lightColor);
-  fillRectangle(context, 5, 8, 11, 1, style.lightColor);
-  for (let speck = 0; speck < 5; speck++) {
-    fillRectangle(context, Math.floor(randomSource() * 16), Math.floor(randomSource() * 16), 1, 1, style.darkColor);
+  context.fillStyle = style.mortarColor;
+  context.fillRect(0, 0, TILE_SIZE, TILE_SIZE);
+  const blocks = [[0, 0, 11, 7.4], [11, 0, 5, 7.4], [0, 8, 4, 7.4], [4, 8, 12, 7.4]];
+  for (const [x, y, width, height] of blocks) paintStone(context, x + 0.3, y + 0.3, width - 0.6, height - 0.3, 1.2, style, (randomSource() - 0.5) * 0.12);
+  context.strokeStyle = 'rgba(0,0,0,0.22)';
+  context.lineWidth = 0.35;
+  for (let crack = 0; crack < 2; crack++) {
+    const x = 2 + randomSource() * 12;
+    const y = 1 + randomSource() * 13;
+    context.beginPath(); context.moveTo(x, y); context.lineTo(x + 1.2, y + 1.4); context.lineTo(x + 0.4, y + 2.6); context.stroke();
   }
+  context.fillStyle = 'rgba(0,0,0,0.18)';
+  for (let speck = 0; speck < 6; speck++) context.fillRect(randomSource() * 15.5, randomSource() * 15.5, 0.5, 0.5);
 }
 
-/** Baldosas de andén: cuadros de 8×8 alternando dos tonos. */
-function paintFloorTiles(context, style) {
-  fillRectangle(context, 0, 0, 16, 16, style.mortarColor);
+/** Baldosas de andén biseladas con desgaste. */
+function paintFloorTiles(context, style, randomSource) {
+  context.fillStyle = style.mortarColor;
+  context.fillRect(0, 0, TILE_SIZE, TILE_SIZE);
   for (let row = 0; row < 2; row++) {
     for (let column = 0; column < 2; column++) {
-      fillRectangle(context, column * 8, row * 8, 7, 7, (column + row) % 2 ? style.baseColor : style.darkColor);
-      fillRectangle(context, column * 8, row * 8, 7, 1, style.lightColor);
+      const color = (column + row) % 2 ? style.baseColor : style.darkColor;
+      const x = column * 8 + 0.4;
+      const y = row * 8 + 0.4;
+      context.fillStyle = color;
+      context.fillRect(x, y, 7.2, 7.2);
+      context.fillStyle = style.lightColor;
+      context.globalAlpha = 0.55; context.fillRect(x, y, 7.2, 0.7); context.fillRect(x, y, 0.7, 7.2);
+      context.globalAlpha = 1;
+      context.fillStyle = 'rgba(0,0,0,0.3)'; context.fillRect(x, y + 6.5, 7.2, 0.7); context.fillRect(x + 6.5, y, 0.7, 7.2);
+      context.fillStyle = 'rgba(255,255,255,0.08)';
+      for (let scuff = 0; scuff < 3; scuff++) context.fillRect(x + 1 + randomSource() * 4.5, y + 1 + randomSource() * 4.5, 1.2, 0.4);
     }
   }
 }
 
-/** Tierra o arena moteada con puntos claros y oscuros. */
+/** Tierra o arena con degradado, guijarros y vetas. */
 function paintSpeckledGround(context, style, randomSource) {
-  fillRectangle(context, 0, 0, 16, 16, style.baseColor);
-  for (let speck = 0; speck < 14; speck++) {
-    fillRectangle(context, Math.floor(randomSource() * 16), Math.floor(randomSource() * 16), 1, 1, speck % 2 ? style.darkColor : style.lightColor);
+  const gradient = context.createLinearGradient(0, 0, 0, TILE_SIZE);
+  gradient.addColorStop(0, shiftHex(style.baseColor, 0.06));
+  gradient.addColorStop(1, shiftHex(style.baseColor, -0.1));
+  context.fillStyle = gradient;
+  context.fillRect(0, 0, TILE_SIZE, TILE_SIZE);
+  context.strokeStyle = style.darkColor;
+  context.globalAlpha = 0.35;
+  context.lineWidth = 0.5;
+  for (let strata = 0; strata < 2; strata++) {
+    const y = 5 + strata * 6;
+    context.beginPath(); context.moveTo(0, y);
+    context.bezierCurveTo(5, y - 1.2, 10, y + 1.4, 16, y); context.stroke();
   }
-  for (let pebble = 0; pebble < 3; pebble++) {
-    fillRectangle(context, Math.floor(randomSource() * 14), Math.floor(randomSource() * 15), 2, 1, style.mortarColor);
+  context.globalAlpha = 1;
+  for (let pebble = 0; pebble < 9; pebble++) {
+    const x = randomSource() * 15;
+    const y = randomSource() * 15;
+    const size = 0.5 + randomSource() * 0.9;
+    context.fillStyle = pebble % 3 ? style.darkColor : style.lightColor;
+    context.beginPath(); context.ellipse(x + 0.5, y + 0.5, size, size * 0.7, 0, 0, Math.PI * 2); context.fill();
+    context.fillStyle = 'rgba(255,255,255,0.3)';
+    context.beginPath(); context.ellipse(x + 0.3, y + 0.25, size * 0.4, size * 0.25, 0, 0, Math.PI * 2); context.fill();
   }
 }
 
@@ -4729,43 +4972,51 @@ const GROUND_PATTERN_PAINTERS = {
   speckled: paintSpeckledGround
 };
 
+/** Banda superior con borde festoneado (hierba, arena…). */
+function paintTopBand(context, thickness, topColor, bottomColor, edgeColor, scallops = 8) {
+  const gradient = context.createLinearGradient(0, 0, 0, thickness + 1.5);
+  gradient.addColorStop(0, topColor);
+  gradient.addColorStop(1, bottomColor);
+  context.fillStyle = gradient;
+  context.beginPath();
+  context.moveTo(0, 0);
+  context.lineTo(TILE_SIZE, 0);
+  context.lineTo(TILE_SIZE, thickness);
+  const step = TILE_SIZE / scallops;
+  for (let index = scallops; index > 0; index--) context.quadraticCurveTo(index * step - step / 2, thickness + 1.6, (index - 1) * step, thickness);
+  context.closePath();
+  context.fill();
+  context.strokeStyle = edgeColor;
+  context.lineWidth = 0.5;
+  context.beginPath();
+  context.moveTo(0, thickness);
+  for (let index = 0; index < scallops; index++) context.quadraticCurveTo(index * step + step / 2, thickness + 1.6, (index + 1) * step, thickness);
+  context.stroke();
+  context.fillStyle = 'rgba(255,255,255,0.35)';
+  context.fillRect(0, 0, TILE_SIZE, 0.7);
+}
+
 /** Capa superior de la baldosa de suelo que queda al aire (hierba, arena…). */
 const GROUND_TOP_LAYER_PAINTERS = {
-  grass(context) {
-    fillRectangle(context, 0, 0, 16, 4, '#3ca83c');
-    fillRectangle(context, 0, 0, 16, 1, '#7cd85c');
-    for (let x = 0; x < 16; x += 2) fillRectangle(context, x, 4, 1, x % 4 === 0 ? 2 : 1, '#3ca83c');
-  },
-  sand(context, style) {
-    fillRectangle(context, 0, 0, 16, 3, style.lightColor);
-    fillRectangle(context, 3, 1, 1, 1, style.darkColor);
-    fillRectangle(context, 11, 2, 1, 1, style.darkColor);
-  },
-  albero(context, style) {
-    fillRectangle(context, 0, 0, 16, 2, style.lightColor);
-    fillRectangle(context, 0, 2, 16, 1, style.baseColor);
-  },
-  dryGrass(context) {
-    fillRectangle(context, 0, 0, 16, 2, '#b89850');
-    for (let x = 1; x < 16; x += 3) fillRectangle(context, x, 2, 1, 2, '#b89850');
-  },
-  rock(context, style) {
-    fillRectangle(context, 0, 0, 16, 2, style.lightColor);
-    fillRectangle(context, 5, 2, 3, 1, style.lightColor);
-  },
+  grass(context) { paintTopBand(context, 3.6, '#7fe05a', '#2f9a3a', '#1b6a2a', 8); },
+  sand(context, style) { paintTopBand(context, 2.6, shiftHex(style.lightColor, 0.2), style.lightColor, style.darkColor, 4); },
+  albero(context, style) { paintTopBand(context, 2.4, shiftHex(style.lightColor, 0.2), style.lightColor, style.darkColor, 5); },
+  dryGrass(context) { paintTopBand(context, 3.2, '#e0c068', '#a88a40', '#6a5420', 8); },
+  rock(context, style) { paintTopBand(context, 2.4, shiftHex(style.lightColor, 0.25), style.lightColor, style.mortarColor, 3); },
   plain(context, style) {
-    fillRectangle(context, 0, 0, 16, 1, style.lightColor);
+    context.fillStyle = shiftHex(style.lightColor, 0.2);
+    context.fillRect(0, 0, TILE_SIZE, 1);
   }
 };
 
 /**
- * Crea una baldosa de suelo.
+ * Crea una baldosa de suelo en alta resolución.
  * @param {import('../world/themes.js').GroundStyle} style
  * @param {boolean} isSurface true si es la baldosa de arriba (la que se pisa).
  * @returns {HTMLCanvasElement}
  */
 function createGroundTile(style, isSurface) {
-  return createCanvas(TILE_SIZE, TILE_SIZE, context => {
+  return createHdTile(TILE_SIZE, TILE_SIZE, context => {
     const randomSource = createSeededRandom(style.baseColor.length * 97 + (isSurface ? 13 : 0));
     GROUND_PATTERN_PAINTERS[style.pattern](context, style, randomSource);
     if (isSurface) GROUND_TOP_LAYER_PAINTERS[style.topLayer || 'plain'](context, style);
@@ -4773,92 +5024,124 @@ function createGroundTile(style, isSurface) {
 }
 
 /* ------------------------------------------------------------------ */
-/* Bloques                                                             */
+/* Bloques (alta resolución)                                           */
 /* ------------------------------------------------------------------ */
 
-/** Ladrillo rompible: dos hileras con juntas desplazadas. */
+/** Borde oscuro y biselado de luz que da aspecto de bloque sólido. */
+function paintBlockFrame(context, borderColor, radius = 1.4) {
+  context.strokeStyle = borderColor;
+  context.lineWidth = 1;
+  context.beginPath();
+  context.roundRect ? context.roundRect(0.5, 0.5, 15, 15, radius) : context.rect(0.5, 0.5, 15, 15);
+  context.stroke();
+  context.fillStyle = 'rgba(255,255,255,0.32)';
+  context.fillRect(1.2, 1.2, 13.6, 0.8);
+  context.fillRect(1.2, 1.2, 0.8, 13.6);
+  context.fillStyle = 'rgba(10,4,30,0.3)';
+  context.fillRect(1.2, 14, 13.6, 0.8);
+  context.fillRect(14, 1.2, 0.8, 13.6);
+}
+
+/** Remache redondo con brillo. */
+function paintRivet(context, x, y, color) {
+  context.fillStyle = color;
+  context.beginPath(); context.arc(x, y, 0.95, 0, Math.PI * 2); context.fill();
+  context.fillStyle = 'rgba(255,255,255,0.6)';
+  context.beginPath(); context.arc(x - 0.25, y - 0.3, 0.35, 0, Math.PI * 2); context.fill();
+}
+
+/** Ladrillo rompible: hileras de ladrillos redondeados con juntas. */
 function createBrickTile(colors) {
-  return createCanvas(TILE_SIZE, TILE_SIZE, context => {
-    fillRectangle(context, 0, 0, 16, 16, colors.base);
-    fillRectangle(context, 0, 0, 16, 1, colors.highlight);
-    fillRectangle(context, 0, 7, 16, 1, colors.mortar);
-    fillRectangle(context, 0, 15, 16, 1, colors.mortar);
-    fillRectangle(context, 7, 0, 1, 7, colors.mortar);
-    fillRectangle(context, 15, 0, 1, 7, colors.mortar);
-    fillRectangle(context, 3, 8, 1, 7, colors.mortar);
-    fillRectangle(context, 11, 8, 1, 7, colors.mortar);
-    fillRectangle(context, 0, 8, 3, 1, colors.highlight);
-    fillRectangle(context, 4, 8, 7, 1, colors.highlight);
-    fillRectangle(context, 12, 8, 4, 1, colors.highlight);
+  return createHdTile(TILE_SIZE, TILE_SIZE, context => {
+    context.fillStyle = colors.mortar;
+    context.fillRect(0, 0, TILE_SIZE, TILE_SIZE);
+    const rows = [[[0, 7.6], [8, 7.6]], [[0, 3.4], [4, 7.4], [12, 4]]];
+    rows.forEach((bricks, rowIndex) => {
+      const y = rowIndex * 8 + 0.4;
+      for (const [x, width] of bricks) {
+        const gradient = context.createLinearGradient(x, y, x + width * 0.5, y + 7);
+        gradient.addColorStop(0, colors.highlight);
+        gradient.addColorStop(0.35, colors.base);
+        gradient.addColorStop(1, shiftHex(colors.base, -0.28));
+        context.fillStyle = gradient;
+        context.beginPath();
+        context.roundRect ? context.roundRect(x + 0.2, y, width - 0.4, 7.2, 1) : context.rect(x + 0.2, y, width - 0.4, 7.2);
+        context.fill();
+        context.fillStyle = 'rgba(255,255,255,0.3)';
+        context.fillRect(x + 0.8, y + 0.3, width - 1.6, 0.55);
+      }
+    });
+    paintBlockFrame(context, shiftHex(colors.mortar, -0.4), 1);
   });
 }
 
-/** Dibujo 4×7 del signo de interrogación de cierre "?". */
-const QUESTION_MARK_PIXELS = ['.XX.', 'X..X', '...X', '..X.', '.X..', '....', '.X..'];
-/** Dibujo 4×7 del signo de interrogación de apertura "¿" (muy español). */
-const INVERTED_QUESTION_MARK_PIXELS = ['..X.', '....', '..X.', '.X..', 'X...', 'X..X', '.XX.'];
 /** Colores del brillo animado de los signos "¿?" en cada fotograma. */
-const QUESTION_GLYPH_SHIMMER = ['#fcfcfc', '#fce8a0', '#fcc860', '#fce8a0'];
-
-/** Pinta un dibujo de 'X' y '.' en una posición. */
-function paintPixelPattern(context, pattern, left, top, color) {
-  pattern.forEach((row, rowIndex) => {
-    for (let column = 0; column < row.length; column++) {
-      if (row[column] === 'X') fillRectangle(context, left + column, top + rowIndex, 1, 1, color);
-    }
-  });
-}
-
-/** Remaches en las cuatro esquinas de un bloque. */
-function paintCornerRivets(context, color) {
-  for (const [x, y] of [[2, 2], [13, 2], [2, 13], [13, 13]]) fillRectangle(context, x, y, 1, 1, color);
-}
+const QUESTION_GLYPH_SHIMMER = ['#ffffff', '#fff2b8', '#ffd870', '#fff2b8'];
 
 /** Bloque "¿?" con premio, en uno de sus fotogramas de brillo. */
 function createQuestionBlockTile(frameIndex) {
-  return createCanvas(TILE_SIZE, TILE_SIZE, context => {
-    const outline = '#7c3000';
-    fillRectangle(context, 0, 0, 16, 16, outline);
-    fillRectangle(context, 1, 1, 14, 14, '#fc9c38');
-    fillRectangle(context, 1, 1, 14, 1, '#fcc878');
-    paintCornerRivets(context, outline);
-    // Sombra de los signos y después los signos con su brillo.
-    paintPixelPattern(context, INVERTED_QUESTION_MARK_PIXELS, 3, 5, outline);
-    paintPixelPattern(context, QUESTION_MARK_PIXELS, 9, 5, outline);
-    paintPixelPattern(context, INVERTED_QUESTION_MARK_PIXELS, 2, 4, QUESTION_GLYPH_SHIMMER[frameIndex]);
-    paintPixelPattern(context, QUESTION_MARK_PIXELS, 8, 4, QUESTION_GLYPH_SHIMMER[frameIndex]);
+  return createHdTile(TILE_SIZE, TILE_SIZE, context => {
+    const gradient = context.createLinearGradient(0, 0, 0, 16);
+    gradient.addColorStop(0, '#ffe27a');
+    gradient.addColorStop(0.5, '#ffb52e');
+    gradient.addColorStop(1, '#e8781a');
+    context.fillStyle = gradient;
+    context.beginPath();
+    context.roundRect ? context.roundRect(0, 0, 16, 16, 1.8) : context.rect(0, 0, 16, 16);
+    context.fill();
+    // Destello que recorre el bloque.
+    const sweep = -6 + frameIndex * 7;
+    const shine = context.createLinearGradient(sweep, 0, sweep + 6, 6);
+    shine.addColorStop(0, 'rgba(255,255,255,0)');
+    shine.addColorStop(0.5, 'rgba(255,255,255,0.42)');
+    shine.addColorStop(1, 'rgba(255,255,255,0)');
+    context.fillStyle = shine;
+    context.fillRect(0, 0, 16, 16);
+    paintBlockFrame(context, '#7a3208', 1.8);
+    for (const [x, y] of [[2.6, 2.6], [13.4, 2.6], [2.6, 13.4], [13.4, 13.4]]) paintRivet(context, x, y, '#b85a10');
+    drawText(context, '¿?', 2.5, 4.4, QUESTION_GLYPH_SHIMMER[frameIndex], { outlineColor: '#7a3208', outlineWidth: 1 });
   });
 }
 
 /** Bloque ya golpeado (vacío). */
 function createUsedBlockTile() {
-  return createCanvas(TILE_SIZE, TILE_SIZE, context => {
-    fillRectangle(context, 0, 0, 16, 16, '#4c2408');
-    fillRectangle(context, 1, 1, 14, 14, '#9c5c2c');
-    fillRectangle(context, 1, 1, 14, 1, '#bc7c44');
-    paintCornerRivets(context, '#4c2408');
+  return createHdTile(TILE_SIZE, TILE_SIZE, context => {
+    const gradient = context.createLinearGradient(0, 0, 0, 16);
+    gradient.addColorStop(0, '#c89060');
+    gradient.addColorStop(1, '#8a5a30');
+    context.fillStyle = gradient;
+    context.beginPath();
+    context.roundRect ? context.roundRect(0, 0, 16, 16, 1.8) : context.rect(0, 0, 16, 16);
+    context.fill();
+    paintBlockFrame(context, '#4a2810', 1.8);
+    for (const [x, y] of [[2.6, 2.6], [13.4, 2.6], [2.6, 13.4], [13.4, 13.4]]) paintRivet(context, x, y, '#6a4020');
+    context.fillStyle = 'rgba(0,0,0,0.15)';
+    context.beginPath(); context.roundRect ? context.roundRect(4.5, 4.5, 7, 7, 1.2) : context.rect(4.5, 4.5, 7, 7); context.fill();
   });
 }
 
 /** Azulejo de estilo talaverano: blanco con rombo azul y esquinas amarillas. */
 function createAzulejoTile() {
-  return createCanvas(TILE_SIZE, TILE_SIZE, context => {
+  return createHdTile(TILE_SIZE, TILE_SIZE, context => {
     const blue = '#2c58c8';
     const yellow = '#fcc830';
-    fillRectangle(context, 0, 0, 16, 16, '#f4f0e4');
-    fillRectangle(context, 0, 0, 16, 1, '#1c3c9c');
-    fillRectangle(context, 0, 15, 16, 1, '#1c3c9c');
-    fillRectangle(context, 0, 0, 1, 16, '#1c3c9c');
-    fillRectangle(context, 15, 0, 1, 16, '#1c3c9c');
-    for (let step = 0; step < 4; step++) {
-      fillRectangle(context, 7 - step, 4 + step, 2 + step * 2, 1, blue);
-      fillRectangle(context, 7 - step, 11 - step, 2 + step * 2, 1, blue);
+    context.fillStyle = '#f7f3e8';
+    context.fillRect(0, 0, 16, 16);
+    context.strokeStyle = '#1c3c9c';
+    context.lineWidth = 1;
+    context.strokeRect(0.5, 0.5, 15, 15);
+    context.fillStyle = blue;
+    context.beginPath(); context.moveTo(8, 2.6); context.lineTo(13.4, 8); context.lineTo(8, 13.4); context.lineTo(2.6, 8); context.closePath(); context.fill();
+    context.fillStyle = '#f7f3e8';
+    context.beginPath(); context.moveTo(8, 4.6); context.lineTo(11.4, 8); context.lineTo(8, 11.4); context.lineTo(4.6, 8); context.closePath(); context.fill();
+    context.fillStyle = yellow;
+    context.beginPath(); context.arc(8, 8, 1.6, 0, Math.PI * 2); context.fill();
+    for (const [x, y] of [[2.4, 2.4], [13.6, 2.4], [2.4, 13.6], [13.6, 13.6]]) {
+      context.fillStyle = yellow; context.beginPath(); context.arc(x, y, 1.5, 0, Math.PI * 2); context.fill();
+      context.fillStyle = blue; context.beginPath(); context.arc(x, y, 0.55, 0, Math.PI * 2); context.fill();
     }
-    fillRectangle(context, 7, 7, 2, 2, yellow);
-    for (const [x, y] of [[1, 1], [12, 1], [1, 12], [12, 12]]) {
-      fillRectangle(context, x, y, 3, 3, yellow);
-      fillRectangle(context, x + 1, y + 1, 1, 1, blue);
-    }
+    context.fillStyle = 'rgba(255,255,255,0.5)';
+    context.fillRect(1.2, 1.2, 13.6, 0.6);
   });
 }
 
@@ -4893,67 +5176,59 @@ function createBarrelTiles() {
   return { topLeft: cutHalf(top, 0), topRight: cutHalf(top, 16), bodyLeft: cutHalf(body, 0), bodyRight: cutHalf(body, 16) };
 }
 
-/** Plataforma de un solo sentido: balcón, toldo o tablón según el tema. */
+/** Plataforma de un solo sentido: balcón, toldo o tablón según el tema (alta resolución). */
 function createOneWayPlatformTile(style) {
-  return createCanvas(TILE_SIZE, TILE_SIZE, context => {
+  return createHdTile(TILE_SIZE, TILE_SIZE, context => {
     if (style.kind === 'balcony') {
-      fillRectangle(context, 0, 0, 16, 4, style.primaryColor);
-      fillRectangle(context, 0, 0, 16, 1, '#fcfcfc');
-      fillRectangle(context, 0, 4, 16, 1, style.secondaryColor);
-      fillTriangle(context, 2, 10, 4, 5, style.secondaryColor);
-      fillTriangle(context, 10, 10, 4, 5, style.secondaryColor);
+      const slab = context.createLinearGradient(0, 0, 0, 4.6);
+      slab.addColorStop(0, '#ffffff');
+      slab.addColorStop(1, style.primaryColor);
+      context.fillStyle = slab;
+      context.beginPath(); context.roundRect ? context.roundRect(0, 0, 16, 4.6, 1) : context.rect(0, 0, 16, 4.6); context.fill();
+      context.strokeStyle = style.edgeColor; context.lineWidth = 0.7;
+      context.beginPath(); context.roundRect ? context.roundRect(0.35, 0.35, 15.3, 4, 1) : context.rect(0.35, 0.35, 15.3, 4); context.stroke();
+      context.fillStyle = style.secondaryColor;
+      for (const x of [2.5, 10.5]) { context.beginPath(); context.moveTo(x, 4.8); context.lineTo(x + 3, 4.8); context.lineTo(x + 1.5, 10.5); context.closePath(); context.fill(); }
     } else if (style.kind === 'awning') {
-      for (let x = 0; x < 16; x += 4) fillRectangle(context, x, 0, 4, 6, (x / 4) % 2 ? style.secondaryColor : style.primaryColor);
-      fillRectangle(context, 0, 0, 16, 1, style.edgeColor);
-      // Flecos del toldo.
-      for (let x = 0; x < 16; x += 4) fillRectangle(context, x + 1, 6, 2, 2, (x / 4) % 2 ? style.secondaryColor : style.primaryColor);
+      for (let x = 0; x < 16; x += 4) {
+        context.fillStyle = (x / 4) % 2 ? style.secondaryColor : style.primaryColor;
+        context.beginPath(); context.moveTo(x, 0); context.lineTo(x + 4, 0); context.lineTo(x + 4, 5.4); context.quadraticCurveTo(x + 2, 8.2, x, 5.4); context.closePath(); context.fill();
+      }
+      context.fillStyle = 'rgba(255,255,255,0.35)'; context.fillRect(0, 0, 16, 0.8);
+      context.strokeStyle = style.edgeColor; context.lineWidth = 0.6; context.strokeRect(0.3, 0.3, 15.4, 5);
     } else {
-      fillRectangle(context, 0, 0, 16, 5, style.primaryColor);
-      fillRectangle(context, 0, 1, 16, 1, style.secondaryColor);
-      fillRectangle(context, 0, 5, 16, 1, style.edgeColor);
-      fillRectangle(context, 2, 2, 1, 1, style.edgeColor);
-      fillRectangle(context, 13, 2, 1, 1, style.edgeColor);
+      const wood = context.createLinearGradient(0, 0, 0, 5.6);
+      wood.addColorStop(0, shiftHex(style.primaryColor, 0.2));
+      wood.addColorStop(1, shiftHex(style.primaryColor, -0.2));
+      context.fillStyle = wood;
+      context.beginPath(); context.roundRect ? context.roundRect(0, 0, 16, 5.6, 1) : context.rect(0, 0, 16, 5.6); context.fill();
+      context.strokeStyle = style.secondaryColor; context.lineWidth = 0.35; context.globalAlpha = 0.6;
+      for (const y of [1.6, 3.2]) { context.beginPath(); context.moveTo(0.5, y); context.bezierCurveTo(5, y - 0.5, 10, y + 0.6, 15.5, y); context.stroke(); }
+      context.globalAlpha = 1;
+      context.strokeStyle = style.edgeColor; context.lineWidth = 0.7;
+      context.beginPath(); context.roundRect ? context.roundRect(0.35, 0.35, 15.3, 4.9, 1) : context.rect(0.35, 0.35, 15.3, 4.9); context.stroke();
+      for (const x of [2, 14]) { context.fillStyle = style.edgeColor; context.beginPath(); context.arc(x, 2.8, 0.55, 0, Math.PI * 2); context.fill(); }
     }
   });
 }
 
-/**
- * Crea los fotogramas animados de un líquido (lava o agua).
- * Cada fotograma tiene una baldosa de superficie (con olas) y otra de profundidad.
- * @returns {{surface: HTMLCanvasElement, depth: HTMLCanvasElement}[]}
- */
-function createLiquidFrames({ surfaceColor, deepColor, waveColor, sparkleColor, waveBaseline }) {
-  const frames = [];
-  for (let frame = 0; frame < TILE_ANIMATION_FRAMES; frame++) {
-    const surface = createCanvas(TILE_SIZE, TILE_SIZE, context => {
-      fillRectangle(context, 0, waveBaseline, 16, 16 - waveBaseline, surfaceColor);
-      fillRectangle(context, 0, 9, 16, 7, deepColor);
-      for (let x = 0; x < 16; x++) {
-        const waveHeight = Math.round(1.5 + Math.sin((x + frame * 4) / 16 * Math.PI * 2) * 1.5);
-        fillRectangle(context, x, waveBaseline - waveHeight, 1, waveHeight + 1, waveColor);
-      }
-      fillRectangle(context, (frame * 5) % 16, 11, 3, 1, sparkleColor);
-    });
-    const depth = createCanvas(TILE_SIZE, TILE_SIZE, context => {
-      fillRectangle(context, 0, 0, 16, 16, deepColor);
-      fillRectangle(context, (frame * 3) % 16, 4, 3, 1, surfaceColor);
-      fillRectangle(context, (frame * 3 + 9) % 16, 10, 3, 1, surfaceColor);
-    });
-    frames.push({ surface, depth });
-  }
-  return frames;
-}
-
 /** Puente de madera del castillo. */
 function createBridgeTile() {
-  return createCanvas(TILE_SIZE, TILE_SIZE, context => {
-    fillRectangle(context, 0, 0, 16, 6, '#a06c30');
-    fillRectangle(context, 0, 0, 16, 1, '#d8a060');
-    fillRectangle(context, 0, 5, 16, 1, '#4c2c10');
-    fillRectangle(context, 7, 0, 1, 6, '#4c2c10');
-    fillRectangle(context, 15, 0, 1, 6, '#4c2c10');
-    fillRectangle(context, 3, 6, 2, 3, '#4c2c10');
-    fillRectangle(context, 11, 6, 2, 3, '#4c2c10');
+  return createHdTile(TILE_SIZE, TILE_SIZE, context => {
+    for (const x of [0, 8]) {
+      const gradient = context.createLinearGradient(0, 0, 0, 6);
+      gradient.addColorStop(0, '#d49a58');
+      gradient.addColorStop(1, '#8a5a28');
+      context.fillStyle = gradient;
+      context.beginPath(); context.roundRect ? context.roundRect(x + 0.2, 0, 7.6, 6, 1) : context.rect(x + 0.2, 0, 7.6, 6); context.fill();
+      context.strokeStyle = '#3a2008'; context.lineWidth = 0.6;
+      context.beginPath(); context.roundRect ? context.roundRect(x + 0.5, 0.3, 7, 5.4, 1) : context.rect(x + 0.5, 0.3, 7, 5.4); context.stroke();
+      context.fillStyle = '#3a2008'; context.beginPath(); context.arc(x + 1.6, 3, 0.5, 0, Math.PI * 2); context.arc(x + 6.4, 3, 0.5, 0, Math.PI * 2); context.fill();
+    }
+    context.fillStyle = '#3a2008';
+    context.fillRect(3, 6, 2, 3.4);
+    context.fillRect(11, 6, 2, 3.4);
+    context.fillStyle = 'rgba(255,255,255,0.3)'; context.fillRect(0, 0, 16, 0.7);
   });
 }
 
@@ -4967,8 +5242,6 @@ function createBridgeTile() {
  * @property {HTMLCanvasElement} azulejo
  * @property {{topLeft:HTMLCanvasElement, topRight:HTMLCanvasElement, bodyLeft:HTMLCanvasElement, bodyRight:HTMLCanvasElement}} barrel
  * @property {HTMLCanvasElement} oneWayPlatform
- * @property {{surface:HTMLCanvasElement, depth:HTMLCanvasElement}[]} lavaFrames
- * @property {{surface:HTMLCanvasElement, depth:HTMLCanvasElement}[]} waterFrames
  * @property {HTMLCanvasElement} bridge
  */
 
@@ -5002,11 +5275,6 @@ function toHdTile(tile, { bevel = false, depthShade = 0 } = {}) {
   return big;
 }
 
-/** Aplica {@link toHdTile} a las baldosas de un líquido animado. */
-function hdLiquidFrames(frames) {
-  return frames.map(frame => ({ surface: toHdTile(frame.surface), depth: toHdTile(frame.depth) }));
-}
-
 /**
  * Genera todas las imágenes de baldosas de un tema, en alta resolución.
  * @param {import('../world/themes.js').Theme} theme
@@ -5015,23 +5283,21 @@ function hdLiquidFrames(frames) {
 function createTileImages(theme) {
   const barrel = createBarrelTiles();
   return {
-    groundSurface: toHdTile(createGroundTile(theme.ground, true)),
-    groundFill: toHdTile(createGroundTile(theme.ground, false), { depthShade: 0.16 }),
-    brick: toHdTile(createBrickTile(theme.brickColors), { bevel: true }),
-    questionBlockFrames: [0, 1, 2, 3].map(frame => toHdTile(createQuestionBlockTile(frame), { bevel: true })),
-    usedBlock: toHdTile(createUsedBlockTile(), { bevel: true }),
-    azulejo: toHdTile(createAzulejoTile()),
+    groundSurface: createGroundTile(theme.ground, true),
+    groundFill: createGroundTile(theme.ground, false),
+    brick: createBrickTile(theme.brickColors),
+    questionBlockFrames: [0, 1, 2, 3].map(createQuestionBlockTile),
+    usedBlock: createUsedBlockTile(),
+    azulejo: createAzulejoTile(),
     barrel: {
       topLeft: toHdTile(barrel.topLeft), topRight: toHdTile(barrel.topRight),
       bodyLeft: toHdTile(barrel.bodyLeft), bodyRight: toHdTile(barrel.bodyRight)
     },
-    oneWayPlatform: toHdTile(createOneWayPlatformTile(theme.oneWayPlatform), { bevel: true }),
-    lavaFrames: hdLiquidFrames(createLiquidFrames({ surfaceColor: '#e83c00', deepColor: '#c02000', waveColor: '#fc9c00', sparkleColor: '#fc7c00', waveBaseline: 4 })),
-    waterFrames: hdLiquidFrames(createLiquidFrames({ surfaceColor: '#1c64c8', deepColor: '#1450a8', waveColor: '#5ca8fc', sparkleColor: '#a8d8fc', waveBaseline: 4 })),
-    bridge: toHdTile(createBridgeTile(), { bevel: true })
+    oneWayPlatform: createOneWayPlatformTile(theme.oneWayPlatform),
+    bridge: createBridgeTile()
   };
 }
-return { TILE_ANIMATION_FRAMES, createTileImages };
+return { createTileImages };
 })();
 
 // ─── src/graphics/backgroundConstants.js ───
@@ -5987,8 +6253,8 @@ function paintSky(context, theme, random) {
   }
   if (theme.sun) {
     const { x, y, radius, color } = theme.sun;
-    glow(context, x, y, radius * 7, color, 0.5);
-    glow(context, x, y, radius * 3, '#ffffff', 0.35);
+    glow(context, x, y, radius * 4.5, color, 0.32);
+    glow(context, x, y, radius * 2.2, '#ffffff', 0.3);
     context.fillStyle = linearGradient(context, 0, y - radius, 0, y + radius, [[0, '#ffffff'], [1, color]]);
     context.beginPath(); context.arc(x, y, radius, 0, TAU); context.fill();
   }
@@ -7049,13 +7315,14 @@ const __module_src_entities_effects_VisualEffect_js = (() => {
 /**
  * @file Efectos visuales de corta duración que no interactúan con nada:
  * pesetas que saltan de un bloque, trozos de ladrillo, textos flotantes,
- * chispas, polvo y "puf" de humo.
+ * chispas brillantes, polvo, nubes de humo, ondas de impacto y estrellitas.
+ * Se dibujan en alta resolución con degradados y brillo aditivo.
  */
 const { SCREEN_WIDTH, SCREEN_HEIGHT } = __module_src_config_constants_js;
 const { clamp } = __module_src_core_math_js;
-const { fillRectangle, fillCircle } = __module_src_core_canvas_js;
 const { SPRITES, drawSprite } = __module_src_graphics_sprites_js;
 const { drawText, measureTextWidth } = __module_src_graphics_font_js;
+const { OUTLINE_COLOR } = __module_src_graphics_hd_js;
 
 /** Tipos de efecto disponibles. */
 const EFFECT_KIND = Object.freeze({
@@ -7064,15 +7331,45 @@ const EFFECT_KIND = Object.freeze({
   FLOATING_TEXT: 'floatingText',
   SPARK: 'spark',
   DUST: 'dust',
-  PUFF: 'puff'
+  PUFF: 'puff',
+  RING: 'ring',
+  STAR: 'star'
 });
 
 /** Pasos que dura la peseta saltando desde un bloque. */
 const BLOCK_COIN_LIFETIME = 26;
 /** Pasos que dura una nube de humo. */
-const PUFF_LIFETIME = 12;
+const PUFF_LIFETIME = 16;
+/** Pasos que dura una onda de impacto. */
+const RING_LIFETIME = 12;
 /** Orden de los fotogramas de la peseta girando. */
 const COIN_SPIN_FRAMES = [0, 1, 2, 1];
+const TAU = Math.PI * 2;
+
+/** Dibuja una estrella de cuatro puntas. */
+function paintSparkle(context, x, y, radius, color) {
+  context.beginPath();
+  for (let point = 0; point < 8; point++) {
+    const angle = point * Math.PI / 4;
+    const length = point % 2 ? radius * 0.28 : radius;
+    context.lineTo(x + Math.cos(angle) * length, y + Math.sin(angle) * length);
+  }
+  context.closePath();
+  context.fillStyle = color;
+  context.fill();
+}
+
+/** Resplandor aditivo circular. */
+function paintGlow(context, x, y, radius, color, opacity) {
+  context.save();
+  context.globalCompositeOperation = 'lighter';
+  const gradient = context.createRadialGradient(x, y, 0, x, y, radius);
+  gradient.addColorStop(0, color.replace('ALPHA', String(opacity)));
+  gradient.addColorStop(1, color.replace('ALPHA', '0'));
+  context.fillStyle = gradient;
+  context.fillRect(x - radius, y - radius, radius * 2, radius * 2);
+  context.restore();
+}
 
 class VisualEffect {
   /**
@@ -7085,9 +7382,10 @@ class VisualEffect {
    * @param {string} [settings.text] Para textos flotantes.
    * @param {string} [settings.color]
    * @param {number} [settings.lifetime] Duración en pasos.
+   * @param {number} [settings.size] Tamaño base (ondas, estrellas y polvo).
    * @param {() => void} [settings.onFinished] Se llama al terminar el efecto.
    */
-  constructor(kind, x, y, { velocityX = 0, velocityY = 0, text = '', color = '#fcfcfc', lifetime = 40, onFinished = null } = {}) {
+  constructor(kind, x, y, { velocityX = 0, velocityY = 0, text = '', color = '#fcfcfc', lifetime = 40, size = 8, onFinished = null } = {}) {
     this.kind = kind;
     this.x = x;
     this.y = y;
@@ -7096,8 +7394,10 @@ class VisualEffect {
     this.text = text;
     this.color = color;
     this.lifetime = lifetime;
+    this.size = size;
     this.onFinished = onFinished;
     this.ageInSteps = 0;
+    this.spin = (x * 7.31 + y * 3.17) % TAU;
     this.shouldBeRemoved = false;
   }
 
@@ -7123,13 +7423,18 @@ class VisualEffect {
         break;
       case EFFECT_KIND.SPARK:
       case EFFECT_KIND.DUST:
+      case EFFECT_KIND.STAR:
         this.x += this.velocityX;
         this.y += this.velocityY;
-        this.velocityY += this.kind === EFFECT_KIND.DUST ? -0.02 : 0.05;
+        this.velocityY += this.kind === EFFECT_KIND.DUST ? -0.012 : 0.05;
+        if (this.kind !== EFFECT_KIND.STAR) { this.velocityX *= 0.97; }
         if (this.ageInSteps > this.lifetime) this.finish();
         break;
       case EFFECT_KIND.PUFF:
         if (this.ageInSteps > PUFF_LIFETIME) this.finish();
+        break;
+      case EFFECT_KIND.RING:
+        if (this.ageInSteps > RING_LIFETIME) this.finish();
         break;
     }
   }
@@ -7147,31 +7452,110 @@ class VisualEffect {
    */
   draw(context, cameraX) {
     const screenX = this.x - cameraX;
+    const progress = this.lifetime > 0 ? this.ageInSteps / this.lifetime : 0;
     switch (this.kind) {
       case EFFECT_KIND.BLOCK_COIN: {
         const frame = COIN_SPIN_FRAMES[(this.ageInSteps >> 2) % COIN_SPIN_FRAMES.length];
+        paintGlow(context, screenX, this.y, 14, 'rgba(255,214,90,ALPHA)', 0.5);
         drawSprite(context, SPRITES[`peseta_spin${frame}`], screenX - 8, this.y - 7);
         break;
       }
-      case EFFECT_KIND.BRICK_DEBRIS:
-        fillRectangle(context, screenX, this.y, 6, 6, this.color);
-        fillRectangle(context, screenX, this.y, 6, 1, '#fcfcfc80');
+      case EFFECT_KIND.BRICK_DEBRIS: {
+        context.save();
+        context.translate(screenX, this.y);
+        context.rotate(this.spin + this.ageInSteps * 0.28);
+        context.fillStyle = this.color;
+        context.strokeStyle = OUTLINE_COLOR;
+        context.lineWidth = 0.8;
+        context.beginPath();
+        context.rect(-3, -2.6, 6, 5.2);
+        context.fill();
+        context.stroke();
+        context.fillStyle = 'rgba(255,255,255,0.35)';
+        context.fillRect(-2.4, -2.1, 4.8, 0.9);
+        context.restore();
         break;
+      }
       case EFFECT_KIND.FLOATING_TEXT: {
         // Se mantiene dentro de la pantalla aunque el origen esté en un borde.
         const halfWidth = measureTextWidth(this.text.toUpperCase()) / 2 + 2;
-        drawText(context, this.text, clamp(screenX, halfWidth, SCREEN_WIDTH - halfWidth), this.y, this.color, { align: 'center', outlineColor: '#000000' });
+        const x = clamp(screenX, halfWidth, SCREEN_WIDTH - halfWidth);
+        // Rebote de aparición.
+        const pop = this.ageInSteps < 8 ? 1 + 0.55 * Math.sin((1 - this.ageInSteps / 8) * Math.PI * 0.5) : 1;
+        const fade = this.ageInSteps > this.lifetime - 10 ? (this.lifetime - this.ageInSteps) / 10 : 1;
+        const previousAlpha = context.globalAlpha;
+        context.globalAlpha = previousAlpha * clamp(fade, 0, 1);
+        context.save();
+        context.translate(x, this.y + 3);
+        context.scale(pop, pop);
+        drawText(context, this.text, 0, -3, this.color, { align: 'center', outlineColor: '#1a1020' });
+        context.restore();
+        context.globalAlpha = previousAlpha;
         break;
       }
-      case EFFECT_KIND.SPARK:
-        fillRectangle(context, screenX, this.y, 2, 2, this.ageInSteps % 4 < 2 ? this.color : '#fcfcfc');
+      case EFFECT_KIND.SPARK: {
+        const fade = 1 - progress;
+        paintGlow(context, screenX, this.y, 6, 'rgba(255,230,140,ALPHA)', 0.6 * fade);
+        context.globalAlpha = fade;
+        paintSparkle(context, screenX, this.y, 1.6 + fade, this.ageInSteps % 4 < 2 ? this.color : '#ffffff');
+        context.globalAlpha = 1;
         break;
-      case EFFECT_KIND.DUST:
-        fillCircle(context, screenX, this.y, Math.max(1, 3 - (this.ageInSteps >> 3)), '#d8c8a8');
+      }
+      case EFFECT_KIND.STAR: {
+        const fade = 1 - progress;
+        context.save();
+        context.globalAlpha = fade;
+        context.translate(screenX, this.y);
+        context.rotate(this.ageInSteps * 0.12);
+        paintGlow(context, 0, 0, this.size * 1.6, 'rgba(255,240,170,ALPHA)', 0.55);
+        paintSparkle(context, 0, 0, this.size * (0.6 + fade * 0.6), this.color);
+        context.restore();
         break;
-      case EFFECT_KIND.PUFF:
-        fillCircle(context, screenX, this.y, 2 + (this.ageInSteps >> 1), this.ageInSteps < 6 ? '#fcfcfc' : '#fc9c00');
+      }
+      case EFFECT_KIND.DUST: {
+        const radius = 1.6 + progress * 3.4;
+        context.save();
+        context.globalAlpha = 0.55 * (1 - progress);
+        const gradient = context.createRadialGradient(screenX, this.y, 0, screenX, this.y, radius);
+        gradient.addColorStop(0, '#f4ead4');
+        gradient.addColorStop(1, 'rgba(216,200,168,0)');
+        context.fillStyle = gradient;
+        context.beginPath();
+        context.arc(screenX, this.y, radius, 0, TAU);
+        context.fill();
+        context.restore();
         break;
+      }
+      case EFFECT_KIND.PUFF: {
+        const t = this.ageInSteps / PUFF_LIFETIME;
+        const radius = 3 + t * 11;
+        paintGlow(context, screenX, this.y, radius * 1.8, 'rgba(255,170,60,ALPHA)', 0.65 * (1 - t));
+        context.save();
+        context.globalAlpha = 1 - t;
+        const gradient = context.createRadialGradient(screenX, this.y, 0, screenX, this.y, radius);
+        gradient.addColorStop(0, '#ffffff');
+        gradient.addColorStop(0.5, '#ffd36a');
+        gradient.addColorStop(1, 'rgba(252,120,0,0)');
+        context.fillStyle = gradient;
+        context.beginPath();
+        context.arc(screenX, this.y, radius, 0, TAU);
+        context.fill();
+        context.restore();
+        break;
+      }
+      case EFFECT_KIND.RING: {
+        const t = this.ageInSteps / RING_LIFETIME;
+        const eased = 1 - (1 - t) * (1 - t);
+        context.save();
+        context.globalAlpha = 1 - t;
+        context.strokeStyle = this.color;
+        context.lineWidth = 2.4 * (1 - t) + 0.4;
+        context.beginPath();
+        context.ellipse(screenX, this.y, this.size * eased, this.size * eased * 0.55, 0, 0, TAU);
+        context.stroke();
+        context.restore();
+        break;
+      }
     }
   }
 }
@@ -8981,6 +9365,7 @@ const __module_src_game_blockInteractions_js = (() => {
 const { TILE_SIZE, GAME_RULES } = __module_src_config_constants_js;
 const { random, rectanglesOverlap } = __module_src_core_math_js;
 const { soundEngine, SOUND_EFFECT } = __module_src_audio_soundEngine_js;
+const { screenFx } = __module_src_graphics_screenFx_js;
 const { TILE, BLOCK_CONTENT } = __module_src_world_tileTypes_js;
 const { blockKey } = __module_src_world_LevelBuilder_js;
 const { GAMEPLAY_MESSAGES } = __module_src_world_texts_js;
@@ -9084,6 +9469,8 @@ function breakBrick(world, column, row) {
     const pieceY = row * TILE_SIZE + (index < 2 ? 1 : 9);
     world.spawnBrickDebris(pieceX, pieceY, velocityX, velocityY);
   });
+  world.spawnImpact(column * TILE_SIZE + 8, row * TILE_SIZE + 8, '#ffd6a0');
+  screenFx.shake(1.1, 7);
   soundEngine.playSoundEffect(SOUND_EFFECT.BRICK_BREAK);
   world.session.addPoints(GAME_RULES.pointsPerBrokenBrick);
 }
@@ -9121,12 +9508,22 @@ return { handlePlayerHeadBump, bumpBlockFromBelow };
 // ─── src/graphics/decorationImages.js ───
 const __module_src_graphics_decorationImages_js = (() => {
 /**
- * @file Imágenes de los decorados que no interactúan con el jugador: nubes,
- * plantas, sombrillas, farolas y el bar donde termina cada nivel.
- * Se generan la primera vez que se piden y se guardan en caché.
+ * @file Imágenes de los decorados que no interactúan con el jugador: plantas,
+ * sombrillas, farolas y el bar donde termina cada nivel.
+ *
+ * Se dibujan con formas vectoriales en alta resolución (contorno oscuro,
+ * degradados de luz y sombra), la primera vez que se piden, y se guardan en
+ * caché. Las medidas se dan en píxeles lógicos; cada imagen lleva un margen
+ * de {@link DECORATION_PADDING} píxeles para el contorno.
  */
-const { createCanvas, fillRectangle, fillCircle, fillTriangle } = __module_src_core_canvas_js;
+const { RENDER_SCALE } = __module_src_config_constants_js;
+const { createCanvas } = __module_src_core_canvas_js;
+const { OUTLINE_COLOR } = __module_src_graphics_hd_js;
 const { drawText } = __module_src_graphics_font_js;
+
+/** Margen (px lógicos) que rodea a cada decoración. */
+const DECORATION_PADDING = 2;
+const TAU = Math.PI * 2;
 
 /** Imágenes ya generadas, por clave. */
 const decorationCache = new Map();
@@ -9134,110 +9531,159 @@ const decorationCache = new Map();
 /**
  * Devuelve una imagen de la caché o la crea si no existe.
  * @param {string} cacheKey
- * @param {number} width
- * @param {number} height
- * @param {(context: CanvasRenderingContext2D) => void} paint
+ * @param {number} width Ancho lógico.
+ * @param {number} height Alto lógico.
+ * @param {(context: CanvasRenderingContext2D) => void} paint Pinta en coordenadas lógicas.
  * @returns {HTMLCanvasElement}
  */
 function getOrCreate(cacheKey, width, height, paint) {
-  if (!decorationCache.has(cacheKey)) decorationCache.set(cacheKey, createCanvas(width, height, paint));
+  if (!decorationCache.has(cacheKey)) {
+    decorationCache.set(cacheKey, createCanvas((width + DECORATION_PADDING * 2) * RENDER_SCALE, (height + DECORATION_PADDING * 2) * RENDER_SCALE, context => {
+      context.scale(RENDER_SCALE, RENDER_SCALE);
+      context.translate(DECORATION_PADDING, DECORATION_PADDING);
+      context.imageSmoothingEnabled = true;
+      context.lineJoin = 'round';
+      context.lineCap = 'round';
+      paint(context);
+    }));
+  }
   return decorationCache.get(cacheKey);
 }
 
-/** Cómo se pinta cada decoración. `height` indica cuánto sobresale del suelo. */
+/** Rellena el camino actual con degradado vertical y le pone contorno. */
+function fillOutlined(context, topColor, bottomColor, top, bottom, lineWidth = 0.9) {
+  const gradient = context.createLinearGradient(0, top, 0, bottom);
+  gradient.addColorStop(0, topColor);
+  gradient.addColorStop(1, bottomColor);
+  context.fillStyle = gradient;
+  context.fill();
+  context.strokeStyle = OUTLINE_COLOR;
+  context.lineWidth = lineWidth;
+  context.stroke();
+}
+
+/** Círculo relleno con degradado y contorno. */
+function blob(context, x, y, radius, topColor, bottomColor) {
+  context.beginPath();
+  context.arc(x, y, radius, 0, TAU);
+  fillOutlined(context, topColor, bottomColor, y - radius, y + radius);
+}
+
+/** Cómo se pinta cada decoración. `width` y `height` son lo que ocupa sobre el suelo. */
 const DECORATION_PAINTERS = {
   arbusto: {
     width: 32, height: 16,
     paint(context) {
-      for (const [x, y, radius] of [[8, 11, 6], [17, 8, 8], [25, 11, 6]]) fillCircle(context, x, y, radius, '#1c7c2c');
-      for (const [x, y, radius] of [[8, 10, 5], [17, 7, 7], [25, 10, 5]]) fillCircle(context, x, y, radius, '#3cb84c');
-      fillRectangle(context, 13, 4, 2, 2, '#8cfc8c');
-      fillRectangle(context, 5, 8, 2, 1, '#8cfc8c');
-      fillRectangle(context, 0, 15, 32, 1, '#1c7c2c');
+      for (const [x, y, radius] of [[8, 11, 6], [24, 11, 6], [16, 8, 8]]) blob(context, x, y, radius, '#6fdc62', '#2a8a3c');
+      context.fillStyle = 'rgba(255,255,255,0.35)';
+      for (const [x, y] of [[13, 4.5], [6, 8.5], [22, 7.5]]) { context.beginPath(); context.ellipse(x, y, 1.6, 0.8, -0.5, 0, TAU); context.fill(); }
+      for (const [x, y, color] of [[10, 12, '#ff7aa8'], [21, 13, '#ffe45a'], [16, 6, '#ff7aa8']]) { context.fillStyle = color; context.beginPath(); context.arc(x, y, 0.9, 0, TAU); context.fill(); }
     }
   },
   chumbera: {
     width: 24, height: 32,
     paint(context) {
-      const paintPad = (centerX, centerY, width, height) => {
-        fillCircle(context, centerX, centerY, Math.max(width, height) / 2, '#2c6c2c');
-        for (let offset = -height / 2; offset < height / 2; offset++) fillRectangle(context, centerX - width / 2 + 1, centerY + offset, width - 2, 1, '#4c9c4c');
+      const pad = (cx, cy, rx, ry, rotation) => {
+        context.beginPath();
+        context.ellipse(cx, cy, rx, ry, rotation, 0, TAU);
+        fillOutlined(context, '#7ad45a', '#2a7a3a', cy - ry, cy + ry);
+        context.fillStyle = '#f4ffc8';
+        for (let spine = 0; spine < 5; spine++) { context.beginPath(); context.arc(cx - rx * 0.5 + spine * rx * 0.28, cy - ry * 0.4 + (spine % 2) * ry * 0.5, 0.35, 0, TAU); context.fill(); }
       };
-      paintPad(12, 25, 10, 12);
-      paintPad(6, 15, 8, 10);
-      paintPad(17, 12, 8, 10);
-      paintPad(11, 5, 6, 8);
-      for (const [x, y] of [[5, 9], [16, 6], [11, 1], [20, 9]]) fillRectangle(context, x, y, 2, 2, '#e84c6c');
-      for (let spine = 0; spine < 12; spine++) fillRectangle(context, 4 + (spine * 7) % 16, 4 + (spine * 11) % 26, 1, 1, '#d8fc9c');
+      pad(12, 26, 6, 6.5, 0);
+      pad(6.5, 16, 4.6, 5.6, -0.4);
+      pad(17.5, 13, 4.6, 5.6, 0.4);
+      pad(11.5, 5.5, 3.6, 4.6, 0.1);
+      for (const [x, y] of [[5, 9.4], [17.6, 6.6], [11.5, 1.2], [21, 9.6]]) {
+        context.beginPath(); context.ellipse(x, y, 1.5, 2, 0, 0, TAU); fillOutlined(context, '#ff6a86', '#c82a58', y - 2, y + 2, 0.7);
+      }
     }
   },
   sombrilla: {
     width: 32, height: 32,
     paint(context) {
-      fillRectangle(context, 15, 8, 2, 24, '#8c8c8c');
-      for (let row = 0; row < 9; row++) {
-        const width = 6 + row * 3;
-        fillRectangle(context, 16 - width / 2, 2 + row, width, 1, row % 2 ? '#fcfcfc' : '#fc4c4c');
+      context.fillStyle = '#4a4a54'; context.fillRect(15.2, 9, 1.6, 23);
+      // Toalla.
+      context.beginPath(); context.roundRect ? context.roundRect(3, 28, 26, 4, 1.4) : context.rect(3, 28, 26, 4);
+      fillOutlined(context, '#7ad8ff', '#2a96d8', 28, 32, 0.8);
+      for (let stripe = 6; stripe < 28; stripe += 6) { context.fillStyle = 'rgba(255,255,255,0.7)'; context.fillRect(stripe, 28.4, 2.4, 3.2); }
+      // Sombrilla de gajos rojos y blancos.
+      for (let segment = 0; segment < 6; segment++) {
+        const a0 = Math.PI + segment * Math.PI / 6;
+        const a1 = a0 + Math.PI / 6;
+        context.beginPath(); context.moveTo(16, 10); context.arc(16, 10, 14.5, a0, a1); context.closePath();
+        context.fillStyle = segment % 2 ? '#ffffff' : '#ff4a58'; context.fill();
+        context.strokeStyle = OUTLINE_COLOR; context.lineWidth = 0.6; context.stroke();
       }
-      for (let x = 2; x < 30; x += 8) fillRectangle(context, x, 11, 4, 1, '#fc4c4c');
-      fillRectangle(context, 4, 28, 24, 3, '#3cbcfc');
-      fillRectangle(context, 4, 28, 24, 1, '#8cdcfc');
+      context.beginPath(); context.arc(16, 10, 14.5, Math.PI, 0); context.strokeStyle = OUTLINE_COLOR; context.lineWidth = 1; context.stroke();
+      context.fillStyle = 'rgba(255,255,255,0.35)'; context.beginPath(); context.ellipse(11, 5, 4, 1.2, -0.5, 0, TAU); context.fill();
     }
   },
   naranjo: {
     width: 24, height: 32,
     paint(context) {
-      fillRectangle(context, 11, 18, 3, 14, '#6c4020');
-      fillCircle(context, 12, 12, 10, '#2c7c2c');
-      fillCircle(context, 12, 11, 8, '#3c9c3c');
-      for (const [x, y] of [[7, 8], [15, 6], [10, 14], [17, 13], [5, 13]]) fillRectangle(context, x, y, 2, 2, '#fc8c00');
+      context.beginPath(); context.moveTo(10.5, 32); context.lineTo(11, 17); context.lineTo(13.5, 17); context.lineTo(14, 32); context.closePath();
+      fillOutlined(context, '#9a6a3a', '#5a3818', 17, 32);
+      for (const [x, y, radius] of [[6.5, 13, 6.5], [17.5, 13, 6.5], [12, 8, 8]]) blob(context, x, y, radius, '#5ec856', '#1f7a36');
+      for (const [x, y] of [[6, 11], [16, 6], [11, 14], [18, 14], [9, 6]]) { blob(context, x, y, 1.9, '#ffb030', '#ee6a10'); context.fillStyle = 'rgba(255,255,255,0.5)'; context.beginPath(); context.arc(x - 0.5, y - 0.6, 0.5, 0, TAU); context.fill(); }
     }
   },
   drago: {
     width: 24, height: 32,
     paint(context) {
-      fillRectangle(context, 10, 14, 4, 18, '#8c7c6c');
-      fillRectangle(context, 6, 12, 2, 6, '#8c7c6c');
-      fillRectangle(context, 16, 12, 2, 6, '#8c7c6c');
-      for (const [x, y, radius] of [[6, 9, 5], [12, 7, 6], [18, 9, 5]]) fillCircle(context, x, y, radius, '#3c7c3c');
+      context.beginPath(); context.moveTo(9, 32); context.lineTo(10.5, 16); context.lineTo(13.5, 16); context.lineTo(15, 32); context.closePath();
+      fillOutlined(context, '#a89888', '#6a5a4c', 16, 32);
+      for (const [x1, y1, x2, y2] of [[10.5, 18, 5, 11], [12, 16, 12, 8], [13.5, 18, 19, 11]]) {
+        context.strokeStyle = OUTLINE_COLOR; context.lineWidth = 3.4; context.beginPath(); context.moveTo(x1, y1); context.lineTo(x2, y2); context.stroke();
+        context.strokeStyle = '#a89888'; context.lineWidth = 2.2; context.beginPath(); context.moveTo(x1, y1); context.lineTo(x2, y2); context.stroke();
+      }
+      for (const [x, y] of [[5, 10], [12, 7], [19, 10]]) {
+        for (let leaf = 0; leaf < 7; leaf++) {
+          const angle = -Math.PI * 0.95 + leaf * Math.PI * 0.9 / 6;
+          context.beginPath(); context.moveTo(x, y); context.quadraticCurveTo(x + Math.cos(angle) * 4, y + Math.sin(angle) * 4 - 1, x + Math.cos(angle) * 7.5, y + Math.sin(angle) * 6.5);
+          context.quadraticCurveTo(x + Math.cos(angle) * 3.4, y + Math.sin(angle) * 2.4, x, y);
+          fillOutlined(context, '#6ad06a', '#1f7a3a', y - 7, y + 3, 0.6);
+        }
+      }
     }
   },
   farola: {
     width: 12, height: 48,
     paint(context) {
-      fillRectangle(context, 5, 10, 2, 38, '#282828');
-      fillRectangle(context, 3, 44, 6, 4, '#282828');
-      fillRectangle(context, 2, 2, 8, 8, '#282828');
-      fillRectangle(context, 3, 3, 6, 6, '#fce07c');
-      fillTriangle(context, 1, 3, 10, 3, '#282828');
+      context.fillStyle = '#2a2632';
+      context.beginPath(); context.roundRect ? context.roundRect(4.8, 10, 2.4, 38, 1) : context.rect(4.8, 10, 2.4, 38); context.fill();
+      context.beginPath(); context.roundRect ? context.roundRect(2.6, 44, 6.8, 4, 1.4) : context.rect(2.6, 44, 6.8, 4); context.fill();
+      context.strokeStyle = OUTLINE_COLOR; context.lineWidth = 0.7; context.stroke();
+      context.beginPath(); context.moveTo(1, 3.4); context.lineTo(11, 3.4); context.lineTo(8.6, 0); context.lineTo(3.4, 0); context.closePath();
+      fillOutlined(context, '#4a4658', '#1c1a24', 0, 3.4, 0.7);
+      context.beginPath(); context.roundRect ? context.roundRect(2.4, 3.2, 7.2, 8, 2.8) : context.rect(2.4, 3.2, 7.2, 8);
+      fillOutlined(context, '#fff6c8', '#ffd35a', 3, 11, 0.8);
+      context.fillStyle = 'rgba(255,255,255,0.7)'; context.beginPath(); context.ellipse(4.4, 6, 0.9, 1.8, 0, 0, TAU); context.fill();
     }
   }
 };
 
 /**
- * Devuelve la imagen de una decoración de suelo (arbusto, chumbera, farola…).
+ * Devuelve la imagen (alta resolución, con margen) de una decoración de suelo.
  * @param {string} decorationType Clave de DECORATION_PAINTERS.
- * @returns {HTMLCanvasElement|null}
+ * @returns {{image: HTMLCanvasElement, width: number, height: number}|null} `width` y `height` lógicos sin margen.
  */
 function getGroundDecorationImage(decorationType) {
   const painter = DECORATION_PAINTERS[decorationType];
   if (!painter) return null;
-  return getOrCreate(decorationType, painter.width, painter.height, painter.paint);
+  return { image: getOrCreate(decorationType, painter.width, painter.height, painter.paint), width: painter.width, height: painter.height };
 }
 
 /**
- * Devuelve la imagen de una nube (azulada y oscura si es de noche).
- * @param {boolean} isNight
- * @returns {HTMLCanvasElement}
+ * Dibuja una imagen de decoración apoyada en el suelo.
+ * @param {CanvasRenderingContext2D} context
+ * @param {{image: HTMLCanvasElement, width: number, height: number}} decoration
+ * @param {number} x Esquina izquierda lógica (sin margen).
+ * @param {number} bottomY Altura lógica del suelo.
  */
-function getCloudImage(isNight) {
-  return getOrCreate(isNight ? 'cloudNight' : 'cloudDay', 48, 24, context => {
-    const bodyColor = isNight ? '#3c4468' : '#fcfcfc';
-    const shadowColor = isNight ? '#2c3458' : '#c8e0fc';
-    for (const [x, y, radius] of [[14, 15, 8], [34, 15, 8], [24, 11, 10]]) fillCircle(context, x, y, radius, shadowColor);
-    for (const [x, y, radius] of [[14, 14, 7], [34, 14, 7], [24, 10, 9]]) fillCircle(context, x, y, radius, bodyColor);
-    fillRectangle(context, 8, 14, 32, 7, bodyColor);
-  });
+function drawGroundDecoration(context, decoration, x, bottomY) {
+  const { image, height } = decoration;
+  context.drawImage(image, x - DECORATION_PADDING, bottomY - height - DECORATION_PADDING, image.width / RENDER_SCALE, image.height / RENDER_SCALE);
 }
 
 /** Medidas del bar de la meta y posición de su puerta (relativas a su esquina). */
@@ -9249,32 +9695,41 @@ const BAR_SIZE = Object.freeze({ width: 80, height: 72, doorCenterX: 44 });
  */
 function getBarImage() {
   return getOrCreate('bar', BAR_SIZE.width, BAR_SIZE.height, context => {
-    // Fachada y tejado.
-    fillRectangle(context, 0, 16, 80, 56, '#f4ead8');
-    fillRectangle(context, 0, 16, 80, 3, '#c8b898');
-    fillRectangle(context, -2, 8, 84, 10, '#b84c28');
-    fillTriangle(context, -2, 10, 84, 6, '#8c3418');
-    // Letrero.
-    fillRectangle(context, 14, 20, 52, 13, '#fcfcfc');
-    fillRectangle(context, 14, 20, 52, 1, '#282828');
-    fillRectangle(context, 14, 32, 52, 1, '#282828');
-    drawText(context, 'BAR PACO', 40, 23, '#c81818', { align: 'center' });
-    // Toldo verde y blanco.
-    for (let x = 0; x < 80; x += 8) fillRectangle(context, x, 36, 8, 6, (x / 8) % 2 ? '#fcfcfc' : '#00a844');
-    fillRectangle(context, 0, 42, 80, 1, '#006020');
-    // Puerta, ventana con botellas y farol.
-    fillRectangle(context, 34, 44, 20, 28, '#3c2410');
-    fillRectangle(context, 36, 46, 16, 26, '#1c0c04');
-    fillRectangle(context, 6, 48, 20, 14, '#3c2410');
-    fillRectangle(context, 8, 50, 16, 10, '#7cb8e8');
-    ['#2c7c2c', '#8c2c1c', '#2c7c2c', '#c8a040'].forEach((bottleColor, index) => fillRectangle(context, 10 + index * 4, 53, 2, 7, bottleColor));
-    fillRectangle(context, 60, 48, 14, 14, '#3c2410');
-    fillRectangle(context, 62, 50, 10, 10, '#fcd87c');
-    fillRectangle(context, 58, 64, 16, 2, '#8c8c8c');
-    fillRectangle(context, 65, 66, 2, 6, '#8c8c8c');
+    const round = (x, y, w, h, r) => { context.beginPath(); context.roundRect ? context.roundRect(x, y, w, h, r) : context.rect(x, y, w, h); };
+    // Fachada con luz lateral y base oscura.
+    round(0, 16, 80, 56, 1);
+    fillOutlined(context, '#fff3de', '#e0cba8', 16, 72, 1);
+    context.fillStyle = 'rgba(30,12,60,0.18)'; context.fillRect(0, 62, 80, 10);
+    // Tejado.
+    context.beginPath(); context.moveTo(-3, 17); context.lineTo(6, 4); context.lineTo(74, 4); context.lineTo(83, 17); context.closePath();
+    fillOutlined(context, '#e0643a', '#9a3418', 4, 17, 1);
+    context.strokeStyle = 'rgba(0,0,0,0.2)'; context.lineWidth = 0.5;
+    for (let x = 4; x < 78; x += 5) { context.beginPath(); context.moveTo(x + 1, 5); context.lineTo(x - 2, 16); context.stroke(); }
+    // Letrero luminoso.
+    round(12, 19, 56, 14, 3); fillOutlined(context, '#ffffff', '#e8e0d0', 19, 33, 1);
+    drawText(context, 'BAR PACO', 40, 23.5, '#d41c1c', { align: 'center' });
+    // Toldo verde y blanco con festón.
+    for (let x = 0; x < 80; x += 8) {
+      context.fillStyle = (x / 8) % 2 ? '#ffffff' : '#10b050';
+      context.beginPath(); context.moveTo(x, 36); context.lineTo(x + 8, 36); context.lineTo(x + 8, 42); context.quadraticCurveTo(x + 4, 46, x, 42); context.closePath(); context.fill();
+    }
+    context.strokeStyle = OUTLINE_COLOR; context.lineWidth = 0.8; context.strokeRect(0, 36, 80, 6);
+    // Puerta.
+    round(34, 46, 20, 26, 6); fillOutlined(context, '#6a3c1c', '#3a1c0a', 46, 72, 1);
+    round(37, 49, 14, 23, 4); context.fillStyle = '#1c0c06'; context.fill();
+    context.fillStyle = '#ffd35a'; context.beginPath(); context.arc(49, 61, 0.9, 0, TAU); context.fill();
+    // Ventana con botellas.
+    round(5, 48, 22, 16, 2); fillOutlined(context, '#bfe6ff', '#6aaee0', 48, 64, 1);
+    ['#2c9c3c', '#a8322c', '#2c9c3c', '#e8b848'].forEach((color, index) => { round(8 + index * 4.6, 54, 2.8, 9, 1.2); context.fillStyle = color; context.fill(); context.strokeStyle = OUTLINE_COLOR; context.lineWidth = 0.5; context.stroke(); });
+    context.fillStyle = 'rgba(255,255,255,0.4)'; context.fillRect(6, 49, 5, 1);
+    // Farol y maceta.
+    round(60, 48, 14, 14, 2); fillOutlined(context, '#6a3c1c', '#3a1c0a', 48, 62, 1);
+    round(62, 50, 10, 10, 1.4); fillOutlined(context, '#fff6c8', '#ffd870', 50, 60, 0.6);
+    context.fillStyle = '#b8603c'; context.fillRect(60, 66, 12, 6);
+    context.fillStyle = '#ff5a7a'; context.beginPath(); context.arc(63, 65, 2, 0, TAU); context.arc(68, 64.4, 2, 0, TAU); context.fill();
   });
 }
-return { getGroundDecorationImage, getCloudImage, BAR_SIZE, getBarImage };
+return { DECORATION_PADDING, getGroundDecorationImage, drawGroundDecoration, BAR_SIZE, getBarImage };
 })();
 
 // ─── src/game/GoalSequence.js ───
@@ -9429,12 +9884,11 @@ const __module_src_game_worldRenderer_js = (() => {
  */
 const { SCREEN_WIDTH, SCREEN_HEIGHT, TILE_SIZE, GROUND_SURFACE_Y, GROUND_TOP_ROW, RENDER_SCALE } = __module_src_config_constants_js;
 const { OUTLINE_COLOR } = __module_src_graphics_hd_js;
-const { fillRectangle, fillCircle, fillTriangle } = __module_src_core_canvas_js;
+const { fillRectangle } = __module_src_core_canvas_js;
 const { SPRITES, drawSprite } = __module_src_graphics_sprites_js;
 const { drawText, measureTextWidth } = __module_src_graphics_font_js;
 const { BACKGROUND_LAYER_WIDTH, PARALLAX_FACTORS } = __module_src_graphics_backgroundConstants_js;
-const { TILE_ANIMATION_FRAMES } = __module_src_graphics_tileImages_js;
-const { getGroundDecorationImage, getBarImage, BAR_SIZE } = __module_src_graphics_decorationImages_js;
+const { getGroundDecorationImage, drawGroundDecoration, getBarImage, BAR_SIZE, DECORATION_PADDING } = __module_src_graphics_decorationImages_js;
 const { TILE, isSolidTile } = __module_src_world_tileTypes_js;
 const { GOAL_POLE_TOP_ROW } = __module_src_world_LevelBuilder_js;
 const { HAM_START_Y } = __module_src_game_GoalSequence_js;
@@ -9494,14 +9948,6 @@ function chooseGroundImage(tileMap, column, row, theme, tileImages) {
 }
 
 /**
- * Elige la imagen de lava o agua: superficie con olas o profundidad.
- */
-function chooseLiquidImage(tileMap, column, row, liquidTile, frames, animationFrame) {
-  const isBelowSameLiquid = row > 0 && tileMap.getTile(column, row - 1) === liquidTile;
-  return isBelowSameLiquid ? frames[animationFrame].depth : frames[animationFrame].surface;
-}
-
-/**
  * Dibuja las baldosas visibles.
  * @param {CanvasRenderingContext2D} context Dónde dibujar.
  * @param {Object} scene
@@ -9517,7 +9963,6 @@ function drawTileLayer(context, { tileMap, tileImages, theme, blockBumpOffsets, 
   const lastColumn = Math.min(tileMap.widthInTiles - 1, firstColumn + VISIBLE_COLUMNS);
   const animationStep = Math.floor(stepCounter / STEPS_PER_TILE_FRAME);
   const pingPongFrame = PING_PONG_FRAMES[animationStep % PING_PONG_FRAMES.length];
-  const liquidFrame = animationStep % TILE_ANIMATION_FRAMES;
 
   for (let row = 0; row < tileMap.heightInTiles; row++) {
     for (let column = firstColumn; column <= lastColumn; column++) {
@@ -9526,13 +9971,20 @@ function drawTileLayer(context, { tileMap, tileImages, theme, blockBumpOffsets, 
       const screenX = Math.round(column * TILE_SIZE - cameraX);
       const screenY = row * TILE_SIZE - (blockBumpOffsets.get(`${column},${row}`) || 0);
 
+      if (tile === TILE.LAVA || tile === TILE.WATER) {
+        drawLiquidTile(context, tileMap, column, row, tile, screenX, screenY, stepCounter);
+        continue;
+      }
       if (tile === TILE.COIN) {
         drawSprite(context, SPRITES[`peseta_spin${pingPongFrame}`], screenX, screenY + 1);
         continue;
       }
-      const image = chooseTileImage(tile, { tileMap, tileImages, theme, column, row, pingPongFrame, liquidFrame });
+      const image = chooseTileImage(tile, { tileMap, tileImages, theme, column, row, pingPongFrame });
       if (image) context.drawImage(image, screenX, screenY, TILE_SIZE, TILE_SIZE);
-      if (tile === TILE.GROUND) drawGroundOutline(context, tileMap, column, row, screenX, screenY);
+      if (tile === TILE.GROUND) {
+        drawGroundOutline(context, tileMap, column, row, screenX, screenY);
+        if (theme.ground.topLayer === 'grass' && row > 0 && !isSolidTile(tileMap.getTile(column, row - 1))) drawGrassBlades(context, column, screenX, screenY, stepCounter);
+      }
       else if (tile === TILE.QUESTION_BLOCK) drawBlockGlow(context, screenX, screenY, stepCounter, column);
     }
   }
@@ -9557,15 +10009,77 @@ function drawBlockGlow(context, screenX, screenY, stepCounter, column) {
   context.save();
   context.globalCompositeOperation = 'lighter';
   const gradient = context.createRadialGradient(screenX + 8, screenY + 8, 2, screenX + 8, screenY + 8, 20);
-  gradient.addColorStop(0, `rgba(255, 190, 70, ${0.22 + pulse * 0.16})`);
+  gradient.addColorStop(0, `rgba(255, 190, 70, ${0.1 + pulse * 0.1})`);
   gradient.addColorStop(1, 'rgba(255, 150, 40, 0)');
   context.fillStyle = gradient;
   context.fillRect(screenX - 14, screenY - 14, 44, 44);
   context.restore();
 }
 
+/** Colores de la lava y el agua: superficie (de arriba abajo) y profundidad. */
+const LIQUID_STYLES = Object.freeze({
+  lava: { surface: ['#fff08a', '#ff8a1c', '#e0380a'], deep: ['#d4300a', '#8a1404'], line: '#fff6b8', glow: '255, 120, 30' },
+  water: { surface: ['#a8ecff', '#44a4f4', '#1e64c8'], deep: ['#1e64c8', '#12408a'], line: 'rgba(255,255,255,0.85)', glow: '80, 170, 255' }
+});
+
+/** Dibuja una baldosa de lava o agua con olas continuas entre baldosas vecinas. */
+function drawLiquidTile(context, tileMap, column, row, tileType, screenX, screenY, stepCounter) {
+  const style = LIQUID_STYLES[tileType === TILE.LAVA ? 'lava' : 'water'];
+  const isSurface = !(row > 0 && tileMap.getTile(column, row - 1) === tileType);
+  const worldX = column * TILE_SIZE;
+  if (!isSurface) {
+    const gradient = context.createLinearGradient(0, screenY, 0, screenY + TILE_SIZE);
+    gradient.addColorStop(0, style.deep[0]);
+    gradient.addColorStop(1, style.deep[1]);
+    context.fillStyle = gradient;
+    context.fillRect(screenX, screenY, TILE_SIZE, TILE_SIZE);
+    // Manchas que se desplazan (corteza de la lava, ondas del agua).
+    context.fillStyle = tileType === TILE.LAVA ? 'rgba(60, 8, 0, 0.35)' : 'rgba(255, 255, 255, 0.1)';
+    for (let patch = 0; patch < 2; patch++) {
+      const px = screenX + ((worldX * 0.37 + patch * 8 + stepCounter * 0.25) % TILE_SIZE);
+      const py = screenY + 3 + patch * 7 + Math.sin(stepCounter / 30 + column + patch) * 1.4;
+      context.beginPath(); context.ellipse(px, py, 3, 1.1, 0, 0, Math.PI * 2); context.fill();
+    }
+    return;
+  }
+  const waveAt = x => 3.4 + Math.sin((worldX + x + stepCounter * 0.9) / 7) * 1.1 + Math.sin((worldX + x) * 0.6 / 5 - stepCounter * 0.07) * 0.7;
+  context.beginPath();
+  context.moveTo(screenX, screenY + TILE_SIZE);
+  for (let x = 0; x <= TILE_SIZE; x++) context.lineTo(screenX + x, screenY + waveAt(x));
+  context.lineTo(screenX + TILE_SIZE, screenY + TILE_SIZE);
+  context.closePath();
+  const gradient = context.createLinearGradient(0, screenY + 2, 0, screenY + TILE_SIZE);
+  gradient.addColorStop(0, style.surface[0]);
+  gradient.addColorStop(0.3, style.surface[1]);
+  gradient.addColorStop(0.65, style.surface[2]);
+  gradient.addColorStop(1, style.deep[0]);
+  context.fillStyle = gradient;
+  context.fill();
+  context.beginPath();
+  for (let x = 0; x <= TILE_SIZE; x++) (x ? context.lineTo(screenX + x, screenY + waveAt(x)) : context.moveTo(screenX, screenY + waveAt(0)));
+  context.strokeStyle = style.line;
+  context.lineWidth = 1;
+  context.stroke();
+  if (tileType === TILE.LAVA) {
+    // Burbujas que suben y estallan, y resplandor sobre la lava.
+    const phase = ((stepCounter + column * 23) % 90) / 90;
+    if (phase < 0.8) {
+      context.fillStyle = 'rgba(255, 220, 120, 0.85)';
+      context.beginPath(); context.arc(screenX + 4 + (column * 5) % 9, screenY + 14 - phase * 12, 1.2 + phase, 0, Math.PI * 2); context.fill();
+    }
+  }
+  context.save();
+  context.globalCompositeOperation = 'lighter';
+  const glow = context.createLinearGradient(0, screenY - 22, 0, screenY + 4);
+  glow.addColorStop(0, `rgba(${style.glow}, 0)`);
+  glow.addColorStop(1, `rgba(${style.glow}, ${tileType === TILE.LAVA ? 0.34 : 0.14})`);
+  context.fillStyle = glow;
+  context.fillRect(screenX, screenY - 22, TILE_SIZE, 26);
+  context.restore();
+}
+
 /** @private Imagen que corresponde a cada tipo de baldosa. */
-function chooseTileImage(tile, { tileMap, tileImages, theme, column, row, pingPongFrame, liquidFrame }) {
+function chooseTileImage(tile, { tileMap, tileImages, theme, column, row, pingPongFrame }) {
   switch (tile) {
     case TILE.GROUND: return chooseGroundImage(tileMap, column, row, theme, tileImages);
     case TILE.BRICK: return tileImages.brick;
@@ -9578,8 +10092,6 @@ function chooseTileImage(tile, { tileMap, tileImages, theme, column, row, pingPo
     case TILE.BARREL_BODY_RIGHT: return tileImages.barrel.bodyRight;
     case TILE.ONE_WAY_PLATFORM: return tileImages.oneWayPlatform;
     case TILE.BRIDGE: return tileImages.bridge;
-    case TILE.LAVA: return chooseLiquidImage(tileMap, column, row, TILE.LAVA, tileImages.lavaFrames, liquidFrame);
-    case TILE.WATER: return chooseLiquidImage(tileMap, column, row, TILE.WATER, tileImages.waterFrames, liquidFrame);
     default: return null;
   }
 }
@@ -9588,38 +10100,101 @@ function chooseTileImage(tile, { tileMap, tileImages, theme, column, row, pingPo
 /* Decorados                                                           */
 /* ------------------------------------------------------------------ */
 
-/** Cartel de madera con texto clavado en el suelo. */
-function drawSign(context, screenX, text) {
-  const boardWidth = measureTextWidth(text.toUpperCase()) + 8;
-  const boardLeft = screenX + 8 - Math.round(boardWidth / 2);
-  fillRectangle(context, screenX + 7, GROUND_SURFACE_Y - 22, 3, 22, '#5c3418');
-  fillRectangle(context, boardLeft, GROUND_SURFACE_Y - 34, boardWidth, 13, '#5c3418');
-  fillRectangle(context, boardLeft + 1, GROUND_SURFACE_Y - 33, boardWidth - 2, 11, '#e8c890');
-  drawText(context, text, boardLeft + 4, GROUND_SURFACE_Y - 31, '#3c2410');
+/** Camino de un rectángulo con esquinas redondeadas (compatible con navegadores sin roundRect). */
+function roundedPath(context, x, y, width, height, radius) {
+  context.beginPath();
+  if (context.roundRect) context.roundRect(x, y, width, height, radius);
+  else context.rect(x, y, width, height);
 }
 
-/** Banderín del punto de control: gris hasta que Paco lo pasa, rojo y amarillo después. */
-function drawCheckpointFlag(context, screenX, isReached) {
-  fillRectangle(context, screenX + 7, GROUND_SURFACE_Y - 34, 2, 34, '#d0d0d0');
-  fillCircle(context, screenX + 8, GROUND_SURFACE_Y - 35, 2, '#fcd800');
-  if (isReached) {
-    fillRectangle(context, screenX + 9, GROUND_SURFACE_Y - 32, 14, 3, '#c8102e');
-    fillRectangle(context, screenX + 9, GROUND_SURFACE_Y - 29, 14, 5, '#fcd800');
-    fillRectangle(context, screenX + 9, GROUND_SURFACE_Y - 24, 14, 3, '#c8102e');
-  } else {
-    fillRectangle(context, screenX + 9, GROUND_SURFACE_Y - 32, 12, 9, '#9c9ca8');
-    fillRectangle(context, screenX + 9, GROUND_SURFACE_Y - 32, 12, 1, '#c8c8d0');
+/** Rellena con degradado vertical y dibuja el contorno oscuro del camino actual. */
+function fillWithOutline(context, topColor, bottomColor, top, bottom, lineWidth = 0.8) {
+  const gradient = context.createLinearGradient(0, top, 0, bottom);
+  gradient.addColorStop(0, topColor);
+  gradient.addColorStop(1, bottomColor);
+  context.fillStyle = gradient;
+  context.fill();
+  context.strokeStyle = OUTLINE_COLOR;
+  context.lineWidth = lineWidth;
+  context.lineJoin = 'round';
+  context.stroke();
+}
+
+/** Cartel de madera con texto clavado en el suelo. */
+function drawSign(context, screenX, text) {
+  const boardWidth = measureTextWidth(text.toUpperCase()) + 10;
+  const boardLeft = screenX + 8 - boardWidth / 2;
+  const boardTop = GROUND_SURFACE_Y - 36;
+  roundedPath(context, screenX + 6.6, GROUND_SURFACE_Y - 24, 2.8, 24, 0.8);
+  fillWithOutline(context, '#a8743c', '#6a4220', GROUND_SURFACE_Y - 24, GROUND_SURFACE_Y, 0.7);
+  roundedPath(context, boardLeft, boardTop, boardWidth, 14, 2.4);
+  fillWithOutline(context, '#fff0c4', '#e2c07c', boardTop, boardTop + 14, 0.9);
+  context.strokeStyle = 'rgba(120,70,20,0.45)';
+  context.lineWidth = 0.4;
+  context.strokeRect(boardLeft + 1.2, boardTop + 1.2, boardWidth - 2.4, 11.6);
+  for (const nailX of [boardLeft + 2.4, boardLeft + boardWidth - 2.4]) {
+    context.fillStyle = '#7a5a30';
+    context.beginPath(); context.arc(nailX, boardTop + 2.6, 0.55, 0, Math.PI * 2); context.fill();
   }
+  drawText(context, text, boardLeft + 5, boardTop + 3.6, '#4a2c10');
+}
+
+/** Banderín del punto de control: gris hasta que Paco lo pasa, rojo y amarillo ondeando después. */
+function drawCheckpointFlag(context, screenX, isReached, stepCounter) {
+  const poleX = screenX + 7;
+  roundedPath(context, poleX, GROUND_SURFACE_Y - 36, 2, 36, 0.8);
+  fillWithOutline(context, '#f0f0f6', '#9898a8', GROUND_SURFACE_Y - 36, GROUND_SURFACE_Y, 0.7);
+  context.beginPath(); context.arc(poleX + 1, GROUND_SURFACE_Y - 37, 2.2, 0, Math.PI * 2);
+  fillWithOutline(context, '#fff3a0', '#e8a810', GROUND_SURFACE_Y - 39, GROUND_SURFACE_Y - 35, 0.7);
+  const flagTop = GROUND_SURFACE_Y - 34;
+  const flagHeight = 11;
+  const flagWidth = 16;
+  const waveAt = x => Math.sin(stepCounter / 6 - x * 0.45) * (isReached ? 1.4 : 0.35) * (x / flagWidth);
+  context.beginPath();
+  context.moveTo(poleX + 2, flagTop);
+  for (let x = 0; x <= flagWidth; x += 2) context.lineTo(poleX + 2 + x, flagTop + waveAt(x));
+  for (let x = flagWidth; x >= 0; x -= 2) context.lineTo(poleX + 2 + x, flagTop + flagHeight + waveAt(x));
+  context.closePath();
+  if (isReached) {
+    const gradient = context.createLinearGradient(0, flagTop, 0, flagTop + flagHeight);
+    gradient.addColorStop(0, '#d41e36'); gradient.addColorStop(0.28, '#d41e36');
+    gradient.addColorStop(0.28, '#ffd51c'); gradient.addColorStop(0.72, '#ffd51c');
+    gradient.addColorStop(0.72, '#d41e36'); gradient.addColorStop(1, '#d41e36');
+    context.fillStyle = gradient;
+    context.fill();
+  } else {
+    context.fillStyle = '#a6a6b4';
+    context.fill();
+  }
+  context.strokeStyle = OUTLINE_COLOR; context.lineWidth = 0.8; context.stroke();
 }
 
 /** Cucaña de la meta (poste a rayas) con el jamón colgado. */
-function drawGoalPole(context, screenX, hamY) {
+function drawGoalPole(context, screenX, hamY, stepCounter) {
   const poleLeft = screenX + 7;
   const poleTop = GOAL_POLE_TOP_ROW * TILE_SIZE;
   const poleBottom = STANDING_ROW * TILE_SIZE;
-  fillRectangle(context, poleLeft, poleTop, 3, poleBottom - poleTop, '#f0f0f0');
-  for (let stripeY = poleTop + 2; stripeY < poleBottom; stripeY += 8) fillRectangle(context, poleLeft, stripeY, 3, 3, '#d82800');
-  fillCircle(context, poleLeft + 1, poleTop - 2, 3, '#fcd800');
+  roundedPath(context, poleLeft, poleTop, 3.2, poleBottom - poleTop, 1);
+  fillWithOutline(context, '#ffffff', '#cfcfdc', poleTop, poleBottom, 0.8);
+  context.save();
+  roundedPath(context, poleLeft, poleTop, 3.2, poleBottom - poleTop, 1);
+  context.clip();
+  context.fillStyle = '#e02a1c';
+  for (let stripeY = poleTop - 4; stripeY < poleBottom; stripeY += 9) {
+    context.beginPath(); context.moveTo(poleLeft - 1, stripeY + 4); context.lineTo(poleLeft + 5, stripeY); context.lineTo(poleLeft + 5, stripeY + 4); context.lineTo(poleLeft - 1, stripeY + 8); context.closePath(); context.fill();
+  }
+  context.restore();
+  context.beginPath(); context.arc(poleLeft + 1.6, poleTop - 2.4, 3.2, 0, Math.PI * 2);
+  fillWithOutline(context, '#fff3a0', '#e8a810', poleTop - 6, poleTop + 1, 0.8);
+  const sparkle = 0.5 + 0.5 * Math.sin(stepCounter / 10);
+  context.save();
+  context.globalCompositeOperation = 'lighter';
+  const gradient = context.createRadialGradient(poleLeft + 1.6, poleTop - 2.4, 1, poleLeft + 1.6, poleTop - 2.4, 16);
+  gradient.addColorStop(0, `rgba(255, 220, 100, ${0.35 + sparkle * 0.25})`);
+  gradient.addColorStop(1, 'rgba(255, 200, 80, 0)');
+  context.fillStyle = gradient;
+  context.fillRect(poleLeft - 16, poleTop - 20, 36, 36);
+  context.restore();
   drawSprite(context, SPRITES.jamon, poleLeft - 12, hamY);
 }
 
@@ -9627,24 +10202,55 @@ function drawGoalPole(context, screenX, hamY) {
 function drawWindmillTower(context, screenX) {
   const hubX = screenX + TILE_SIZE + 8;
   const towerTop = 112;
-  for (let y = towerTop; y < GROUND_SURFACE_Y; y++) {
-    const width = Math.round(18 + (y - towerTop) * 12 / (GROUND_SURFACE_Y - towerTop));
-    fillRectangle(context, hubX - width / 2, y, width, 1, '#d4d4e0');
-    fillRectangle(context, hubX - width / 2, y, 2, 1, '#9c9cb0');
-  }
-  fillTriangle(context, hubX - 13, towerTop + 2, 26, 18, '#3c3c54');
-  fillRectangle(context, hubX - 3, GROUND_SURFACE_Y - 14, 7, 14, '#3c2c1c');
-  fillRectangle(context, hubX - 2, 140, 4, 6, '#3c2c1c');
+  const topHalf = 9;
+  const bottomHalf = 15;
+  context.beginPath();
+  context.moveTo(hubX - topHalf, towerTop); context.lineTo(hubX + topHalf, towerTop);
+  context.lineTo(hubX + bottomHalf, GROUND_SURFACE_Y); context.lineTo(hubX - bottomHalf, GROUND_SURFACE_Y); context.closePath();
+  const gradient = context.createLinearGradient(hubX - bottomHalf, 0, hubX + bottomHalf, 0);
+  gradient.addColorStop(0, '#fbfbff'); gradient.addColorStop(0.55, '#c8c8e0'); gradient.addColorStop(1, '#8484aa');
+  context.fillStyle = gradient; context.fill();
+  context.strokeStyle = OUTLINE_COLOR; context.lineWidth = 0.9; context.lineJoin = 'round'; context.stroke();
+  context.strokeStyle = 'rgba(70,70,110,0.25)'; context.lineWidth = 0.4;
+  for (let y = towerTop + 8; y < GROUND_SURFACE_Y - 4; y += 9) { context.beginPath(); context.moveTo(hubX - topHalf - (y - towerTop) * 0.04, y); context.lineTo(hubX + topHalf + (y - towerTop) * 0.04, y); context.stroke(); }
+  context.beginPath(); context.moveTo(hubX - topHalf - 3, towerTop + 1); context.lineTo(hubX + topHalf + 3, towerTop + 1); context.lineTo(hubX, towerTop - 17); context.closePath();
+  fillWithOutline(context, '#5a5a78', '#2c2c46', towerTop - 17, towerTop + 1, 0.9);
+  roundedPath(context, hubX - 3.4, GROUND_SURFACE_Y - 15, 6.8, 15, 3);
+  fillWithOutline(context, '#6a4224', '#3a2010', GROUND_SURFACE_Y - 15, GROUND_SURFACE_Y, 0.7);
+  roundedPath(context, hubX - 2, 138, 4, 7, 2);
+  fillWithOutline(context, '#fff2b0', '#ffc860', 138, 145, 0.6);
 }
 
 /** Pedestal con la tortilla y la receta flotando (sala final del castillo). */
 function drawRecipePedestal(context, screenX, stepCounter) {
-  fillRectangle(context, screenX + 4, GROUND_SURFACE_Y - 18, 24, 18, '#8c8494');
-  fillRectangle(context, screenX, GROUND_SURFACE_Y - 22, 32, 4, '#b0a4b8');
-  fillCircle(context, screenX + 16, GROUND_SURFACE_Y - 26, 9, '#fcfcfc');
+  roundedPath(context, screenX + 4, GROUND_SURFACE_Y - 18, 24, 18, 1.6);
+  fillWithOutline(context, '#b8b0c6', '#6c6480', GROUND_SURFACE_Y - 18, GROUND_SURFACE_Y, 0.9);
+  roundedPath(context, screenX, GROUND_SURFACE_Y - 23, 32, 6, 2);
+  fillWithOutline(context, '#e0d8ec', '#9890ac', GROUND_SURFACE_Y - 23, GROUND_SURFACE_Y - 17, 0.9);
+  const floatOffset = Math.sin(stepCounter / 15) * 2;
+  context.save();
+  context.globalCompositeOperation = 'lighter';
+  const gradient = context.createRadialGradient(screenX + 16, GROUND_SURFACE_Y - 40, 2, screenX + 16, GROUND_SURFACE_Y - 40, 34);
+  gradient.addColorStop(0, `rgba(255, 235, 150, ${0.5 + 0.15 * Math.sin(stepCounter / 12)})`);
+  gradient.addColorStop(1, 'rgba(255, 220, 120, 0)');
+  context.fillStyle = gradient;
+  context.fillRect(screenX - 20, GROUND_SURFACE_Y - 76, 72, 72);
+  context.restore();
   drawSprite(context, SPRITES.tortilla, screenX + 8, GROUND_SURFACE_Y - 34);
-  const floatOffset = Math.round(Math.sin(stepCounter / 15) * 2);
   drawSprite(context, SPRITES.receta, screenX + 10, GROUND_SURFACE_Y - 56 + floatOffset);
+}
+
+/** Resplandor cálido de una farola, con un leve parpadeo. */
+function drawLampGlow(context, x, y, stepCounter) {
+  const flicker = 0.85 + 0.15 * Math.sin(stepCounter / 9 + x);
+  context.save();
+  context.globalCompositeOperation = 'lighter';
+  const gradient = context.createRadialGradient(x, y, 1, x, y, 30);
+  gradient.addColorStop(0, `rgba(255, 220, 130, ${0.55 * flicker})`);
+  gradient.addColorStop(1, 'rgba(255, 190, 90, 0)');
+  context.fillStyle = gradient;
+  context.fillRect(x - 30, y - 30, 60, 60);
+  context.restore();
 }
 
 /**
@@ -9666,19 +10272,164 @@ function drawDecorations(context, { decorations, theme, isCheckpointReached, ham
     switch (decoration.type) {
       case 'cloud': break; // las nubes son ahora parte del fondo
       case 'sign': drawSign(context, screenX, decoration.text); break;
-      case 'checkpoint': drawCheckpointFlag(context, screenX, isCheckpointReached); break;
-      case 'goalPole': drawGoalPole(context, screenX, hamY === null ? HAM_START_Y : hamY); break;
-      case 'bar': context.drawImage(getBarImage(), screenX, GROUND_SURFACE_Y - BAR_SIZE.height); break;
+      case 'checkpoint': drawCheckpointFlag(context, screenX, isCheckpointReached, stepCounter); break;
+      case 'goalPole': drawGoalPole(context, screenX, hamY === null ? HAM_START_Y : hamY, stepCounter); break;
+      case 'bar': { const barImage = getBarImage(); context.drawImage(barImage, screenX - DECORATION_PADDING, GROUND_SURFACE_Y - BAR_SIZE.height - DECORATION_PADDING, barImage.width / RENDER_SCALE, barImage.height / RENDER_SCALE); break; }
       case 'windmillTower': drawWindmillTower(context, screenX); break;
       case 'abuela': drawSprite(context, SPRITES.abuela, screenX, GROUND_SURFACE_Y - SPRITES.abuela.height, { mirrored: true }); break;
       case 'recipePedestal': drawRecipePedestal(context, screenX, stepCounter); break;
       default: {
         // Plantas y farolas: se apoyan sobre el suelo.
-        const image = getGroundDecorationImage(decoration.type);
-        if (image) context.drawImage(image, screenX, GROUND_SURFACE_Y - image.height);
+        const decorationImage = getGroundDecorationImage(decoration.type);
+        if (decorationImage) {
+          drawGroundDecoration(context, decorationImage, screenX, GROUND_SURFACE_Y);
+          if (decoration.type === 'farola') drawLampGlow(context, screenX + 6, GROUND_SURFACE_Y - 40, stepCounter);
+        }
       }
     }
   }
+}
+
+/** Briznas de hierba que se mecen con el viento sobre el suelo expuesto. */
+function drawGrassBlades(context, column, screenX, screenY, stepCounter) {
+  for (let blade = 0; blade < 4; blade++) {
+    const seed = (column * 31 + blade * 17) % 11;
+    const baseX = screenX + 1.5 + blade * 4 + (seed % 3) * 0.6;
+    const height = 3 + (seed % 4) * 0.7;
+    const sway = Math.sin(stepCounter / 22 + column * 0.7 + blade) * 0.9 + 0.4;
+    context.beginPath();
+    context.moveTo(baseX - 0.8, screenY + 0.6);
+    context.quadraticCurveTo(baseX + sway * 0.4, screenY - height * 0.6, baseX + sway, screenY - height);
+    context.quadraticCurveTo(baseX + 0.3 + sway * 0.4, screenY - height * 0.5, baseX + 0.8, screenY + 0.6);
+    context.closePath();
+    context.fillStyle = blade % 2 ? '#4fc44a' : '#7fe05a';
+    context.fill();
+    context.strokeStyle = '#1b6a2a';
+    context.lineWidth = 0.4;
+    context.stroke();
+  }
+}
+
+/** Busca la altura (en píxeles) de la primera baldosa sólida bajo un punto, o null si no hay (foso). */
+function findGroundBelow(tileMap, centerX, fromY) {
+  const column = Math.floor(centerX / TILE_SIZE);
+  if (column < 0 || column >= tileMap.widthInTiles) return null;
+  for (let row = Math.max(0, Math.floor(fromY / TILE_SIZE)); row < tileMap.heightInTiles; row++) {
+    if (isSolidTile(tileMap.getTile(column, row))) return row * TILE_SIZE;
+  }
+  return null;
+}
+
+/** Sombra suave en el suelo bajo un personaje; se encoge y desvanece con la altura. */
+function drawShadow(context, tileMap, centerX, feetY, halfWidth, cameraX) {
+  const groundY = findGroundBelow(tileMap, centerX, feetY - 2);
+  if (groundY === null) return;
+  const distance = Math.max(0, groundY - feetY);
+  if (distance > 120) return;
+  const fade = 1 - distance / 130;
+  const radiusX = halfWidth * (0.6 + 0.5 * fade);
+  const screenX = centerX - cameraX;
+  context.save();
+  context.translate(screenX, groundY + 0.4);
+  context.scale(1, 0.24);
+  const gradient = context.createRadialGradient(0, 0, 0, 0, 0, radiusX);
+  gradient.addColorStop(0, `rgba(12, 6, 30, ${0.5 * fade})`);
+  gradient.addColorStop(1, 'rgba(12, 6, 30, 0)');
+  context.fillStyle = gradient;
+  context.beginPath();
+  context.arc(0, 0, radiusX, 0, Math.PI * 2);
+  context.fill();
+  context.restore();
+}
+
+/**
+ * Dibuja las sombras de Paco y de los enemigos.
+ * @param {CanvasRenderingContext2D} context
+ * @param {Object} scene
+ * @param {import('../world/TileMap.js').TileMap} scene.tileMap
+ * @param {Array} scene.entities
+ * @param {import('../entities/Player.js').Player} scene.player
+ * @param {number} cameraX
+ */
+function drawShadows(context, { tileMap, entities, player }, cameraX) {
+  for (const entity of entities) {
+    if (!entity.isEnemy || entity.isDefeated || entity.drawsBehindTiles) continue;
+    if (entity.x + entity.width < cameraX - 8 || entity.x > cameraX + SCREEN_WIDTH + 8) continue;
+    drawShadow(context, tileMap, entity.centerX, entity.bottom, Math.max(6, entity.width * 0.6), cameraX);
+  }
+  if (!player.isDead && !player.isHidden) drawShadow(context, tileMap, player.centerX, player.bottom, 8, cameraX);
+}
+
+/** Lienzo auxiliar para el oscurecimiento de las escenas con poca luz. */
+let lightCanvas = null;
+
+/**
+ * Oscurece la escena dejando círculos de luz (alrededor de Paco y de otras fuentes).
+ * @param {CanvasRenderingContext2D} context
+ * @param {{darkness:number, color:string, playerLightRadius:number}} lighting
+ * @param {Array<{x:number, y:number, radius:number}>} lights Posiciones en pantalla.
+ */
+function drawLighting(context, lighting, lights) {
+  if (!lightCanvas) {
+    lightCanvas = document.createElement('canvas');
+    lightCanvas.width = SCREEN_WIDTH * RENDER_SCALE;
+    lightCanvas.height = SCREEN_HEIGHT * RENDER_SCALE;
+  }
+  const lightContext = lightCanvas.getContext('2d');
+  lightContext.setTransform(RENDER_SCALE, 0, 0, RENDER_SCALE, 0, 0);
+  lightContext.globalCompositeOperation = 'source-over';
+  lightContext.clearRect(0, 0, SCREEN_WIDTH, SCREEN_HEIGHT);
+  lightContext.fillStyle = lighting.color;
+  lightContext.globalAlpha = lighting.darkness;
+  lightContext.fillRect(0, 0, SCREEN_WIDTH, SCREEN_HEIGHT);
+  lightContext.globalAlpha = 1;
+  lightContext.globalCompositeOperation = 'destination-out';
+  for (const light of lights) {
+    const gradient = lightContext.createRadialGradient(light.x, light.y, 0, light.x, light.y, light.radius);
+    gradient.addColorStop(0, 'rgba(0,0,0,1)');
+    gradient.addColorStop(0.55, 'rgba(0,0,0,0.65)');
+    gradient.addColorStop(1, 'rgba(0,0,0,0)');
+    lightContext.fillStyle = gradient;
+    lightContext.fillRect(light.x - light.radius, light.y - light.radius, light.radius * 2, light.radius * 2);
+  }
+  context.drawImage(lightCanvas, 0, 0, SCREEN_WIDTH, SCREEN_HEIGHT);
+}
+
+/**
+ * Antorchas del castillo: llamas que bailan y un halo cálido. Están en la capa
+ * cercana del fondo, así que se mueven con su parallax. Devuelve sus posiciones
+ * en pantalla para que también iluminen.
+ * @returns {Array<{x:number, y:number, radius:number}>}
+ */
+function drawTorches(context, cameraX, stepCounter) {
+  const lights = [];
+  const period = 128;
+  const offset = (((101.5 - cameraX * PARALLAX_FACTORS.nearLayer) % period) + period) % period;
+  for (let torch = -1; torch < 4; torch++) {
+    const x = offset + torch * period;
+    if (x < -30 || x > SCREEN_WIDTH + 30) continue;
+    const flicker = 0.8 + 0.2 * Math.sin(stepCounter / 3 + torch * 2.3) + 0.08 * Math.sin(stepCounter / 1.7 + torch);
+    const y = 121;
+    context.save();
+    context.globalCompositeOperation = 'lighter';
+    const halo = context.createRadialGradient(x, y, 1, x, y, 46);
+    halo.addColorStop(0, `rgba(255,170,70,${0.5 * flicker})`);
+    halo.addColorStop(1, 'rgba(255,120,40,0)');
+    context.fillStyle = halo;
+    context.fillRect(x - 46, y - 46, 92, 92);
+    context.restore();
+    context.beginPath();
+    context.moveTo(x - 3.2, y + 3);
+    context.quadraticCurveTo(x - 4.6, y - 3, x, y - 11 * flicker);
+    context.quadraticCurveTo(x + 4.6, y - 3, x + 3.2, y + 3);
+    context.closePath();
+    const flame = context.createLinearGradient(0, y - 11, 0, y + 3);
+    flame.addColorStop(0, '#fff3a0'); flame.addColorStop(0.5, '#ff9a2a'); flame.addColorStop(1, '#d4301c');
+    context.fillStyle = flame;
+    context.fill();
+    lights.push({ x, y, radius: 62 });
+  }
+  return lights;
 }
 
 /**
@@ -9690,7 +10441,7 @@ function drawRain(context, rainDrops) {
   context.fillStyle = '#b8d0ec';
   for (const drop of rainDrops) context.fillRect(Math.round(drop.x), Math.round(drop.y), 1, 4);
 }
-return { drawBackground, drawTileLayer, drawDecorations, drawRain };
+return { drawBackground, drawTileLayer, drawDecorations, drawShadows, drawLighting, drawTorches, drawRain };
 })();
 
 // ─── src/game/hud.js ───
@@ -9698,13 +10449,13 @@ const __module_src_game_hud_js = (() => {
 /**
  * @file Marcador superior (HUD): puntos, vidas, pesetas, nivel y tiempo.
  */
-const { LEVEL_TIMER } = __module_src_config_constants_js;
+const { LEVEL_TIMER, SCREEN_WIDTH } = __module_src_config_constants_js;
 const { SPRITES, drawSpriteFitted } = __module_src_graphics_sprites_js;
 const { drawText } = __module_src_graphics_font_js;
 
 const LABEL_ROW_Y = 5;
 const VALUE_ROW_Y = 15;
-const SHADOW = { shadowColor: '#000000' };
+const STYLE = { outlineColor: '#140c20' };
 
 /**
  * Dibuja el marcador.
@@ -9717,20 +10468,27 @@ const SHADOW = { shadowColor: '#000000' };
  * @param {number} status.stepCounter Para hacer parpadear el tiempo cuando se acaba.
  */
 function drawHud(context, { session, levelNumber, levelName, timeRemaining, stepCounter }) {
-  drawText(context, 'PACO', 12, LABEL_ROW_Y, '#fcfcfc', SHADOW);
-  drawText(context, String(session.score).padStart(6, '0'), 12, VALUE_ROW_Y, '#fcfcfc', SHADOW);
+  // Franja oscura translúcida para que se lea sobre cualquier fondo.
+  const bar = context.createLinearGradient(0, 0, 0, 30);
+  bar.addColorStop(0, 'rgba(10, 6, 28, 0.6)');
+  bar.addColorStop(1, 'rgba(10, 6, 28, 0)');
+  context.fillStyle = bar;
+  context.fillRect(0, 0, SCREEN_WIDTH, 30);
 
-  drawText(context, `♥×${session.lives}`, 96, LABEL_ROW_Y, '#fc7c7c', SHADOW);
+  drawText(context, 'PACO', 12, LABEL_ROW_Y, '#ffd84a', STYLE);
+  drawText(context, String(session.score).padStart(6, '0'), 12, VALUE_ROW_Y, '#ffffff', STYLE);
+
+  drawText(context, `♥×${session.lives}`, 96, LABEL_ROW_Y, '#ff7a8a', STYLE);
   drawSpriteFitted(context, SPRITES.peseta_spin0, 94, 13, 9, 8);
-  drawText(context, `×${String(session.coins).padStart(2, '0')}`, 104, VALUE_ROW_Y, '#fcfcfc', SHADOW);
+  drawText(context, `×${String(session.coins).padStart(2, '0')}`, 104, VALUE_ROW_Y, '#ffffff', STYLE);
 
-  drawText(context, 'NIVEL', 160, LABEL_ROW_Y, '#fcfcfc', SHADOW);
-  drawText(context, `${levelNumber} ${levelName}`, 160, VALUE_ROW_Y, '#fcd800', SHADOW);
+  drawText(context, 'NIVEL', 160, LABEL_ROW_Y, '#ffd84a', STYLE);
+  drawText(context, `${levelNumber} ${levelName}`, 160, VALUE_ROW_Y, '#ffffff', STYLE);
 
   const isRunningOut = timeRemaining <= LEVEL_TIMER.hurryWarningTime;
   const blinkRed = isRunningOut && Math.floor(stepCounter / 16) % 2 === 1;
-  drawText(context, 'TIEMPO', 308, LABEL_ROW_Y, '#fcfcfc', { ...SHADOW, align: 'right' });
-  drawText(context, String(timeRemaining), 308, VALUE_ROW_Y, blinkRed ? '#fc5c5c' : '#fcfcfc', { ...SHADOW, align: 'right' });
+  drawText(context, 'TIEMPO', 308, LABEL_ROW_Y, '#ffd84a', { ...STYLE, align: 'right' });
+  drawText(context, String(timeRemaining), 308, VALUE_ROW_Y, blinkRed ? '#ff5a5a' : '#ffffff', { ...STYLE, align: 'right' });
 }
 return { drawHud };
 })();
@@ -9757,6 +10515,7 @@ const { SCREEN_WIDTH, SCREEN_HEIGHT, TILE_SIZE, GAME_RULES, LEVEL_TIMER, CAMERA_
 const { BUTTON } = __module_src_core_input_js;
 const { random, randomBetween, randomInteger, randomItem, rectanglesOverlap, clamp } = __module_src_core_math_js;
 const { soundEngine, SOUND_EFFECT } = __module_src_audio_soundEngine_js;
+const { screenFx } = __module_src_graphics_screenFx_js;
 const { drawText, measureTextWidth } = __module_src_graphics_font_js;
 const { getThemeAssets } = __module_src_graphics_themeAssets_js;
 const { FINAL_ROOM_END_COLUMN } = __module_src_world_levels_js;
@@ -9770,7 +10529,7 @@ const { TaxInvoice } = __module_src_entities_hazards_TaxInvoice_js;
 const { createEntityForSpawnPoint, spawnsAheadOfCamera, isEnemySpawn } = __module_src_game_entityFactory_js;
 const { handlePlayerHeadBump } = __module_src_game_blockInteractions_js;
 const { GoalSequence } = __module_src_game_GoalSequence_js;
-const { drawBackground, drawDecorations, drawTileLayer, drawRain } = __module_src_game_worldRenderer_js;
+const { drawBackground, drawDecorations, drawTileLayer, drawRain, drawShadows, drawLighting, drawTorches } = __module_src_game_worldRenderer_js;
 const { drawHud } = __module_src_game_hud_js;
 
 /** Fases del mundo. */
@@ -9991,6 +10750,9 @@ class World {
    */
   rewardStomp(enemy, player, exclamation) {
     player.stompCombo++;
+    this.spawnImpact(enemy.centerX, enemy.y + enemy.height * 0.5);
+    screenFx.hitStop(2 + Math.min(3, player.stompCombo));
+    screenFx.shake(0.7 + player.stompCombo * 0.15, 8);
     this.awardPoints(this.getComboPoints(player.stompCombo), enemy.centerX, enemy.y - 4);
     let message = exclamation || null;
     if (!message && enemy.catchphrases && random() < 0.4) message = randomItem(enemy.catchphrases);
@@ -10017,6 +10779,18 @@ class World {
     this.addVisualEffect(new VisualEffect(EFFECT_KIND.PUFF, x, y));
   }
 
+  /** Impacto vistoso: onda expansiva, estrellitas y chispas (pisotones, golpes). */
+  spawnImpact(x, y, color = '#ffffff') {
+    this.addVisualEffect(new VisualEffect(EFFECT_KIND.RING, x, y, { color, size: 14 }));
+    for (let star = 0; star < 5; star++) {
+      const angle = (star / 5) * Math.PI * 2 + randomBetween(-0.3, 0.3);
+      this.addVisualEffect(new VisualEffect(EFFECT_KIND.STAR, x, y, {
+        velocityX: Math.cos(angle) * randomBetween(1.1, 2), velocityY: Math.sin(angle) * randomBetween(1.1, 2) - 0.6,
+        color: star % 2 ? '#ffe45a' : '#ffffff', lifetime: 22, size: 3.4
+      }));
+    }
+  }
+
   spawnSpark(x, y, color = '#fcd800') {
     this.addVisualEffect(new VisualEffect(EFFECT_KIND.SPARK, x, y, { velocityX: randomBetween(-0.6, 0.6), velocityY: randomBetween(-1.2, -0.2), color, lifetime: 20 }));
   }
@@ -10032,6 +10806,8 @@ class World {
   /** Hace temblar la pantalla unos pasos (explosiones, golpes al jefe). */
   shakeScreen(steps) {
     this.shakeStepsLeft = Math.max(this.shakeStepsLeft, steps);
+    screenFx.shake(1.4 + steps * 0.18, steps * 2);
+    screenFx.flash('#ffffff', 0.18);
   }
 
   /** Congela la acción unos pasos (al crecer o al recibir un golpe). */
@@ -10042,6 +10818,11 @@ class World {
   /** Paco recoge una peseta suelta o de un bloque. */
   collectCoin() {
     soundEngine.playSoundEffect(SOUND_EFFECT.COIN);
+    for (let star = 0; star < 3; star++) {
+      this.addVisualEffect(new VisualEffect(EFFECT_KIND.STAR, this.player.centerX + randomBetween(-5, 5), this.player.y + randomBetween(0, 8), {
+        velocityX: randomBetween(-0.8, 0.8), velocityY: randomBetween(-1.4, -0.4), color: '#ffe45a', lifetime: 20, size: 2.8
+      }));
+    }
     if (this.session.addCoin()) {
       soundEngine.playSoundEffect(SOUND_EFFECT.EXTRA_LIFE);
       this.showBanner(GAMEPLAY_MESSAGES.hundredCoins, 100);
@@ -10167,6 +10948,10 @@ class World {
     if (player.isBig) player.setPowerLevel(POWER_LEVEL.SMALL);
     this.phase = WORLD_PHASE.PLAYER_DYING;
     this.stepsInPhase = 0;
+    screenFx.flash(burned ? '#ff7a30' : '#ff3a3a', 0.55);
+    screenFx.hitStop(10);
+    screenFx.shake(2.6, 22);
+    this.spawnImpact(player.centerX, player.centerY, '#ff5a5a');
     this.didFallIntoPit = fellIntoPit;
     this.isPaused = false;
     this.lifeLostMessage = randomItem(burned ? BURNED_MESSAGES : LIFE_LOST_MESSAGES);
@@ -10443,10 +11228,12 @@ class World {
       stepCounter: this.stepCounter
     }, cameraX);
     for (const platform of this.platforms) platform.draw(context, cameraX);
+    drawShadows(context, { tileMap: this.tileMap, entities: this.entities, player: this.player }, cameraX);
     for (const entity of this.entities) if (!entity.drawsBehindTiles) entity.draw(context, cameraX);
     this.player.draw(context, cameraX);
     for (const effect of this.visualEffects) effect.draw(context, cameraX);
     if (this.theme.hasRain) drawRain(context, this.rainDrops);
+    this.drawAtmosphere(context, cameraX);
 
     drawHud(context, {
       session: this.session,
@@ -10457,6 +11244,23 @@ class World {
     });
     this.drawMessages(context);
     if (this.isPaused) this.drawPauseOverlay(context);
+  }
+
+  /**
+   * @private Iluminación y tono de color del nivel (luz de Paco, antorchas, oscuridad).
+   * @param {CanvasRenderingContext2D} context
+   * @param {number} cameraX
+   */
+  drawAtmosphere(context, cameraX) {
+    const theme = this.theme;
+    screenFx.grade = theme.grade || { color: '#000000', alpha: 0, mode: 'soft-light' };
+    screenFx.vignette = theme.vignette === undefined ? 0.5 : theme.vignette;
+    screenFx.bloom = theme.bloom === undefined ? 0.28 : theme.bloom;
+    if (!theme.lighting) return;
+    const lights = [];
+    if (theme.name === 'hacienda') lights.push(...drawTorches(context, cameraX, this.stepCounter));
+    if (!this.player.isDead) lights.push({ x: this.player.centerX - cameraX, y: this.player.centerY, radius: theme.lighting.playerLightRadius });
+    drawLighting(context, theme.lighting, lights);
   }
 
   /**
@@ -10503,12 +11307,12 @@ const __module_src_game_screens_TitleScreen_js = (() => {
  */
 const { SCREEN_WIDTH, TILE_SIZE, GROUND_SURFACE_Y } = __module_src_config_constants_js;
 const { BUTTON } = __module_src_core_input_js;
-const { fillRectangle } = __module_src_core_canvas_js;
 const { loadProgress } = __module_src_core_storage_js;
 const { soundEngine, SOUND_EFFECT } = __module_src_audio_soundEngine_js;
 const { SPRITES, drawSprite } = __module_src_graphics_sprites_js;
 const { pacoSpriteName } = __module_src_graphics_spriteData_js;
 const { drawText } = __module_src_graphics_font_js;
+const { drawPanel, drawFlagBanner } = __module_src_graphics_uiKit_js;
 const { getThemeAssets } = __module_src_graphics_themeAssets_js;
 const { LEVELS } = __module_src_world_levels_js;
 const { TITLE_TAGLINES } = __module_src_world_texts_js;
@@ -10587,7 +11391,7 @@ class TitleScreen {
     this.drawLogo(context);
     this.drawMenu(context);
     this.drawWalkingCharacters(context);
-    drawText(context, TITLE_TAGLINES[this.taglineIndex], SCREEN_WIDTH / 2, 226, '#fcfcfc', { align: 'center', outlineColor: '#000000' });
+    drawText(context, TITLE_TAGLINES[this.taglineIndex], SCREEN_WIDTH / 2, 226, '#fcfcfc', { align: 'center', outlineColor: '#140c20' });
   }
 
   /** @private */
@@ -10600,16 +11404,17 @@ class TitleScreen {
     }
   }
 
-  /** @private Logotipo sobre una franja roja y amarilla. */
+  /** @private Logotipo sobre una cinta ondulante con los colores de la bandera. */
   drawLogo(context) {
-    fillRectangle(context, 0, 26, SCREEN_WIDTH, 14, '#c8102e');
-    fillRectangle(context, 0, 40, SCREEN_WIDTH, 30, '#fcd800');
-    fillRectangle(context, 0, 70, SCREEN_WIDTH, 14, '#c8102e');
-    fillRectangle(context, 0, 25, SCREEN_WIDTH, 1, '#000000');
-    fillRectangle(context, 0, 84, SCREEN_WIDTH, 1, '#000000');
-    drawText(context, 'SÚPER PACO', SCREEN_WIDTH / 2, 45, '#c8102e', { align: 'center', scale: 3, outlineColor: '#000000' });
-    drawText(context, 'LA TORTILLA PERDIDA', SCREEN_WIDTH / 2, 92, '#fcfcfc', { align: 'center', scale: 2, outlineColor: '#000000' });
-    drawText(context, `RÉCORD ${String(this.highScore).padStart(6, '0')}`, SCREEN_WIDTH / 2, 112, '#fcd800', { align: 'center', shadowColor: '#000000' });
+    drawFlagBanner(context, 24, 62, this.stepCounter);
+    const bounce = Math.sin(this.stepCounter / 18) * 1.6;
+    context.save();
+    context.translate(SCREEN_WIDTH / 2, 55 + bounce);
+    context.rotate(Math.sin(this.stepCounter / 40) * 0.015);
+    drawText(context, 'SÚPER PACO', 0, -10, '#e4162f', { align: 'center', scale: 3, outlineColor: '#140c20' });
+    context.restore();
+    drawText(context, 'LA TORTILLA PERDIDA', SCREEN_WIDTH / 2, 94, '#ffffff', { align: 'center', scale: 2, outlineColor: '#140c20' });
+    drawText(context, `RÉCORD ${String(this.highScore).padStart(6, '0')}`, SCREEN_WIDTH / 2, 116, '#ffd84a', { align: 'center', outlineColor: '#140c20' });
   }
 
   /** @private */
@@ -10619,24 +11424,28 @@ class TitleScreen {
       if (option === MENU_OPTION.CONTINUE) return `CONTINUAR  ◀ NIVEL ${this.continueLevelIndex + 1} ▶`;
       return 'CONTROLES';
     });
-    const lineHeight = 14;
-    context.fillStyle = 'rgba(8,6,20,0.6)';
-    context.fillRect(70, 126, 180, labels.length * lineHeight + 8);
-    const isCursorVisible = Math.floor(this.stepCounter / 16) % 2 === 1;
+    const lineHeight = 16;
+    drawPanel(context, 70, 128, 180, labels.length * lineHeight + 10);
     labels.forEach((label, index) => {
-      const y = 132 + index * lineHeight;
+      const y = 134 + index * lineHeight;
       const isSelected = index === this.selectedOptionIndex;
-      if (isSelected && isCursorVisible) drawText(context, '▶', 80, y, '#fcd800');
-      drawText(context, label, 92, y, isSelected ? '#fcd800' : '#fcfcfc');
+      if (isSelected) {
+        const pulse = 0.5 + 0.5 * Math.sin(this.stepCounter / 8);
+        context.fillStyle = `rgba(255, 216, 74, ${0.16 + pulse * 0.1})`;
+        context.fillRect(76, y - 3, 168, 13);
+        drawText(context, '▶', 80 + Math.sin(this.stepCounter / 6) * 1.5, y, '#ffd84a');
+      }
+      drawText(context, label, 92, y, isSelected ? '#ffd84a' : '#f4f0ff', { shadowColor: '#140c20' });
     });
   }
 
   /** @private Paco pasea por delante perseguido por un guiri. */
   drawWalkingCharacters(context) {
     const walkerX = ((this.stepCounter * 1.2) % (SCREEN_WIDTH + 60)) - 30;
-    const walkFrame = Math.floor(this.stepCounter / 8) % 2 ? 1 : 2;
-    drawSprite(context, SPRITES[pacoSpriteName('small', `walk${walkFrame}`, 'normal')], walkerX, GROUND_SURFACE_Y - 16);
-    drawSprite(context, SPRITES[`guiri_frame${walkFrame}`], walkerX - 60, GROUND_SURFACE_Y - 16, { mirrored: true });
+    const runFrame = (Math.floor(this.stepCounter / 3) % 8) + 1;
+    const guiriFrame = Math.floor(this.stepCounter / 8) % 2 ? 1 : 2;
+    drawSprite(context, SPRITES[pacoSpriteName('small', `run${runFrame}`, 'normal')], walkerX, GROUND_SURFACE_Y - 16);
+    drawSprite(context, SPRITES[`guiri_frame${guiriFrame}`], walkerX - 60, GROUND_SURFACE_Y - 16, { mirrored: true });
   }
 }
 return { TitleScreen };
@@ -10647,12 +11456,12 @@ const __module_src_game_screens_ControlsScreen_js = (() => {
 /**
  * @file Pantalla que explica los controles y para qué sirve cada objeto.
  */
-const { SCREEN_WIDTH, SCREEN_HEIGHT } = __module_src_config_constants_js;
+const { SCREEN_WIDTH } = __module_src_config_constants_js;
 const { BUTTON } = __module_src_core_input_js;
-const { fillRectangle } = __module_src_core_canvas_js;
 const { soundEngine, SOUND_EFFECT } = __module_src_audio_soundEngine_js;
 const { SPRITES, drawSprite } = __module_src_graphics_sprites_js;
 const { drawText } = __module_src_graphics_font_js;
+const { drawBackdrop, drawPanel } = __module_src_graphics_uiKit_js;
 const { CONTROLS_HELP_ROWS, ITEM_HELP_ROWS } = __module_src_world_texts_js;
 
 const INPUT_COOLDOWN_STEPS = 10;
@@ -10675,14 +11484,16 @@ class ControlsScreen {
   }
 
   draw(context) {
-    fillRectangle(context, 0, 0, SCREEN_WIDTH, SCREEN_HEIGHT, '#141024');
-    drawText(context, 'CONTROLES', SCREEN_WIDTH / 2, 12, '#fcd800', { align: 'center', scale: 2 });
+    drawBackdrop(context, this.stepCounter, { top: '#2a1e58', bottom: '#07040f' });
+    drawPanel(context, 6, 30, SCREEN_WIDTH - 12, 92);
+    drawPanel(context, 6, 126, SCREEN_WIDTH - 12, 90);
+    drawText(context, 'CONTROLES', SCREEN_WIDTH / 2, 10, '#ffd84a', { align: 'center', scale: 2, outlineColor: '#140c20' });
     CONTROLS_HELP_ROWS.forEach(([keys, action], index) => {
       drawText(context, keys, 14, 38 + index * 12, '#8cc8fc');
       drawText(context, action, 118, 38 + index * 12, '#fcfcfc');
     });
 
-    drawText(context, 'OBJETOS', SCREEN_WIDTH / 2, 128, '#fcd800', { align: 'center' });
+    drawText(context, 'OBJETOS', SCREEN_WIDTH / 2, 130, '#ffd84a', { align: 'center', outlineColor: '#140c20' });
     ITEM_HELP_ROWS.forEach(([spriteName, description], index) => {
       const x = index < ITEMS_PER_COLUMN ? 14 : 170;
       const y = 142 + (index % ITEMS_PER_COLUMN) * 20;
@@ -10702,11 +11513,11 @@ const __module_src_game_screens_StoryScreen_js = (() => {
 /**
  * @file Historia inicial, escrita letra a letra como en las consolas clásicas.
  */
-const { SCREEN_WIDTH, SCREEN_HEIGHT } = __module_src_config_constants_js;
-const { fillRectangle } = __module_src_core_canvas_js;
+const { SCREEN_WIDTH } = __module_src_config_constants_js;
 const { soundEngine, SOUND_EFFECT } = __module_src_audio_soundEngine_js;
 const { SPRITES, drawSprite } = __module_src_graphics_sprites_js;
 const { drawText, measureTextWidth } = __module_src_graphics_font_js;
+const { drawBackdrop, drawPanel } = __module_src_graphics_uiKit_js;
 const { STORY_LINES } = __module_src_world_texts_js;
 
 /** Letras que aparecen por cada paso de simulación. */
@@ -10733,7 +11544,8 @@ class StoryScreen {
   }
 
   draw(context) {
-    fillRectangle(context, 0, 0, SCREEN_WIDTH, SCREEN_HEIGHT, '#100c1c');
+    drawBackdrop(context, this.stepCounter, { top: '#2e1e5c', bottom: '#07040f' });
+    drawPanel(context, 14, 18, SCREEN_WIDTH - 28, STORY_LINES.length * 13 + 22);
     const lettersToShow = Math.floor(this.stepCounter * LETTERS_PER_STEP);
     let lettersBeforeThisLine = 0;
     STORY_LINES.forEach((line, index) => {
@@ -10742,7 +11554,7 @@ class StoryScreen {
       const lineLeft = SCREEN_WIDTH / 2 - measureTextWidth(line) / 2;
       drawText(context, visiblePart, lineLeft, 30 + index * 13, index === HIGHLIGHTED_LINE_INDEX ? '#fcd800' : '#fcfcfc');
     });
-    drawSprite(context, SPRITES.tortilla, 152, 158);
+    drawSprite(context, SPRITES.tortilla, 152, 158 + Math.sin(this.stepCounter / 14) * 3);
     const hasFinishedWriting = lettersToShow > lettersBeforeThisLine;
     if (hasFinishedWriting) drawText(context, '¡VAMOS, QUE NOS VAMOS!', SCREEN_WIDTH / 2, 190, '#fcd800', { align: 'center' });
     if (this.stepCounter > INPUT_COOLDOWN_STEPS) {
@@ -10757,14 +11569,15 @@ return { StoryScreen };
 // ─── src/game/screens/LevelIntroScreen.js ───
 const __module_src_game_screens_LevelIntroScreen_js = (() => {
 /**
- * @file Pantalla negra que presenta el nivel: número, ciudad, frase y vidas.
+ * @file Pantalla que presenta el nivel: número, ciudad, frase y vidas, sobre un fondo con los colores de la ciudad.
  */
-const { SCREEN_WIDTH, SCREEN_HEIGHT } = __module_src_config_constants_js;
-const { fillRectangle } = __module_src_core_canvas_js;
+const { SCREEN_WIDTH } = __module_src_config_constants_js;
 const { soundEngine } = __module_src_audio_soundEngine_js;
 const { SPRITES, drawSprite } = __module_src_graphics_sprites_js;
 const { pacoSpriteName } = __module_src_graphics_spriteData_js;
 const { drawText } = __module_src_graphics_font_js;
+const { drawBackdrop, drawPanel } = __module_src_graphics_uiKit_js;
+const { THEMES } = __module_src_world_themes_js;
 const { LEVELS } = __module_src_world_levels_js;
 
 /** Pasos que se muestra antes de empezar el nivel automáticamente. */
@@ -10792,13 +11605,18 @@ class LevelIntroScreen {
 
   draw(context) {
     const level = LEVELS[this.session.levelIndex];
-    fillRectangle(context, 0, 0, SCREEN_WIDTH, SCREEN_HEIGHT, '#000000');
-    drawText(context, `NIVEL ${this.session.levelIndex + 1}`, SCREEN_WIDTH / 2, 56, '#fcfcfc', { align: 'center', scale: 2 });
-    drawText(context, level.name, SCREEN_WIDTH / 2, 82, '#fcd800', { align: 'center', scale: 3 });
-    drawText(context, `"${level.subtitle}"`, SCREEN_WIDTH / 2, 118, '#8cc8fc', { align: 'center' });
-    drawSprite(context, SPRITES[pacoSpriteName('small', 'stand', 'normal')], 132, 148);
-    drawText(context, `×  ${this.session.lives}`, 156, 153, '#fcfcfc');
-    drawText(context, `PUNTOS ${String(this.session.score).padStart(6, '0')}`, SCREEN_WIDTH / 2, 196, '#9c9cb0', { align: 'center' });
+    const theme = THEMES[level.themeName] || THEMES.madrid;
+    drawBackdrop(context, this.stepCounter, { top: theme.skyColors[0], bottom: '#07040f', accent: theme.skyColors[2] });
+    const slide = Math.min(1, this.stepCounter / 14);
+    const ease = 1 - Math.pow(1 - slide, 3);
+    drawText(context, `NIVEL ${this.session.levelIndex + 1}`, SCREEN_WIDTH / 2, 50 - (1 - ease) * 30, '#ffffff', { align: 'center', scale: 2, outlineColor: '#140c20' });
+    drawText(context, level.name, SCREEN_WIDTH / 2 + (1 - ease) * 200, 78, '#ffd84a', { align: 'center', scale: 3, outlineColor: '#140c20' });
+    drawText(context, `"${level.subtitle}"`, SCREEN_WIDTH / 2, 118, '#bfe6ff', { align: 'center', shadowColor: '#140c20' });
+    drawPanel(context, 116, 140, 88, 30);
+    const bob = Math.abs(Math.sin(this.stepCounter / 7)) * 2;
+    drawSprite(context, SPRITES[pacoSpriteName('small', `run${(Math.floor(this.stepCounter / 3) % 8) + 1}`, 'normal')], 126, 147 - bob);
+    drawText(context, `×  ${this.session.lives}`, 152, 151, '#ffffff', { shadowColor: '#140c20', scale: 2 });
+    drawText(context, `PUNTOS ${String(this.session.score).padStart(6, '0')}`, SCREEN_WIDTH / 2, 196, '#c8c8e0', { align: 'center', shadowColor: '#140c20' });
   }
 }
 return { LevelIntroScreen };
@@ -10809,12 +11627,12 @@ const __module_src_game_screens_GameOverScreen_js = (() => {
 /**
  * @file Pantalla de fin de partida ("Se acabó lo que se daba").
  */
-const { SCREEN_WIDTH, SCREEN_HEIGHT } = __module_src_config_constants_js;
-const { fillRectangle } = __module_src_core_canvas_js;
+const { SCREEN_WIDTH } = __module_src_config_constants_js;
 const { soundEngine } = __module_src_audio_soundEngine_js;
 const { SPRITES, drawSprite } = __module_src_graphics_sprites_js;
 const { pacoSpriteName } = __module_src_graphics_spriteData_js;
 const { drawText } = __module_src_graphics_font_js;
+const { drawBackdrop } = __module_src_graphics_uiKit_js;
 
 /** Pasos antes de poder volver al título (para no saltárselo sin querer). */
 const MINIMUM_DISPLAY_STEPS = 120;
@@ -10837,9 +11655,9 @@ class GameOverScreen {
   }
 
   draw(context) {
-    fillRectangle(context, 0, 0, SCREEN_WIDTH, SCREEN_HEIGHT, '#000000');
-    drawText(context, 'SE ACABÓ LO QUE', SCREEN_WIDTH / 2, 70, '#fcfcfc', { align: 'center', scale: 2 });
-    drawText(context, 'SE DABA', SCREEN_WIDTH / 2, 92, '#fcfcfc', { align: 'center', scale: 2 });
+    drawBackdrop(context, this.stepCounter, { top: '#4a1224', bottom: '#050208', accent: '#ff6a6a' });
+    drawText(context, 'SE ACABÓ LO QUE', SCREEN_WIDTH / 2, 70, '#ffffff', { align: 'center', scale: 2, outlineColor: '#140c20' });
+    drawText(context, 'SE DABA', SCREEN_WIDTH / 2, 92, '#ff6a6a', { align: 'center', scale: 2, outlineColor: '#140c20' });
     drawText(context, `PUNTOS ${String(this.finalScore).padStart(6, '0')}`, SCREEN_WIDTH / 2, 130, '#fcd800', { align: 'center' });
     drawSprite(context, SPRITES[pacoSpriteName('small', 'dead', 'normal')], 152, 150);
     if (this.stepCounter > MINIMUM_DISPLAY_STEPS) {
@@ -10864,11 +11682,11 @@ const __module_src_game_screens_EndingScreen_js = (() => {
  */
 const { SCREEN_WIDTH, SCREEN_HEIGHT } = __module_src_config_constants_js;
 const { BUTTON } = __module_src_core_input_js;
-const { fillRectangle, fillCircle } = __module_src_core_canvas_js;
 const { soundEngine, SOUND_EFFECT } = __module_src_audio_soundEngine_js;
 const { SPRITES, drawSprite, drawScaledSprite } = __module_src_graphics_sprites_js;
 const { pacoSpriteName } = __module_src_graphics_spriteData_js;
 const { drawText, drawTextLines } = __module_src_graphics_font_js;
+const { drawBackdrop, drawPanel } = __module_src_graphics_uiKit_js;
 const { ENDING_TEXTS } = __module_src_world_texts_js;
 
 const ENDING_STEP = Object.freeze({ GRANDMA_THANKS: 0, ONION_QUESTION: 1, ANSWER: 2, CREDITS: 3 });
@@ -10934,17 +11752,51 @@ class EndingScreen {
     }
   }
 
-  /** @private La abuela, Paco y la tortilla sobre la mesa. */
+  /** @private La abuela, Paco y la tortilla sobre la mesa, en una cocina acogedora. */
   drawKitchenScene(context) {
-    fillRectangle(context, 0, 0, SCREEN_WIDTH, SCREEN_HEIGHT, '#1c1420');
-    fillRectangle(context, 0, 150, SCREEN_WIDTH, 90, '#3c2c28');
-    fillRectangle(context, 0, 150, SCREEN_WIDTH, 2, '#5c443c');
-    for (let x = 0; x < SCREEN_WIDTH; x += 32) fillRectangle(context, x, 40, 20, 30, '#2c2030');
-    // Mesa con la tortilla.
-    fillRectangle(context, 120, 118, 80, 8, '#8c5c30');
-    fillRectangle(context, 128, 126, 6, 24, '#5c3c20');
-    fillRectangle(context, 186, 126, 6, 24, '#5c3c20');
-    fillCircle(context, 160, 114, 12, '#fcfcfc');
+    const wall = context.createLinearGradient(0, 0, 0, 150);
+    wall.addColorStop(0, '#3a2840');
+    wall.addColorStop(1, '#6a4a48');
+    context.fillStyle = wall;
+    context.fillRect(0, 0, SCREEN_WIDTH, 150);
+    // Ventana con luz cálida de atardecer.
+    context.fillStyle = '#1c1020';
+    context.fillRect(212, 22, 70, 62);
+    const sky = context.createLinearGradient(0, 26, 0, 80);
+    sky.addColorStop(0, '#ff9a5a'); sky.addColorStop(1, '#ffd890');
+    context.fillStyle = sky;
+    context.fillRect(215, 25, 64, 56);
+    context.fillStyle = '#1c1020';
+    context.fillRect(246, 25, 2, 56); context.fillRect(215, 52, 64, 2);
+    context.save();
+    context.globalCompositeOperation = 'lighter';
+    const light = context.createRadialGradient(247, 54, 4, 247, 54, 110);
+    light.addColorStop(0, 'rgba(255,190,110,0.45)'); light.addColorStop(1, 'rgba(255,150,80,0)');
+    context.fillStyle = light;
+    context.fillRect(100, 0, 220, 190);
+    context.restore();
+    // Azulejos de la pared y suelo de madera.
+    for (let x = 0; x < SCREEN_WIDTH; x += 20) {
+      for (let y = 100; y < 150; y += 10) {
+        context.fillStyle = (x / 20 + y / 10) % 2 ? '#e8dcc4' : '#d8c8aa';
+        context.fillRect(x, y, 19.4, 9.4);
+      }
+    }
+    const floor = context.createLinearGradient(0, 150, 0, SCREEN_HEIGHT);
+    floor.addColorStop(0, '#7a5230'); floor.addColorStop(1, '#3a2418');
+    context.fillStyle = floor;
+    context.fillRect(0, 150, SCREEN_WIDTH, 90);
+    context.strokeStyle = 'rgba(0,0,0,0.25)'; context.lineWidth = 0.6;
+    for (let x = 0; x < SCREEN_WIDTH; x += 26) { context.beginPath(); context.moveTo(x, 150); context.lineTo(x - 18, SCREEN_HEIGHT); context.stroke(); }
+    // Mesa con mantel y la tortilla en su plato.
+    context.fillStyle = '#5a3820'; context.fillRect(128, 126, 6, 26); context.fillRect(186, 126, 6, 26);
+    context.beginPath(); context.moveTo(112, 118); context.lineTo(208, 118); context.lineTo(216, 132); context.lineTo(104, 132); context.closePath();
+    const cloth = context.createLinearGradient(0, 118, 0, 132);
+    cloth.addColorStop(0, '#fff6e6'); cloth.addColorStop(1, '#e05a5a');
+    context.fillStyle = cloth; context.fill();
+    context.strokeStyle = '#140c20'; context.lineWidth = 1; context.stroke();
+    context.beginPath(); context.ellipse(160, 117, 22, 5, 0, 0, Math.PI * 2);
+    context.fillStyle = '#ffffff'; context.fill(); context.stroke();
     drawSprite(context, SPRITES.tortilla, 152, 104);
     drawScaledSprite(context, SPRITES.abuela, 56, 102, 2);
     drawScaledSprite(context, SPRITES[pacoSpriteName('big', 'stand', 'normal')], 226, 86, 2, true);
@@ -10952,9 +11804,7 @@ class EndingScreen {
 
   /** @private Cuadro de diálogo con el texto escribiéndose letra a letra. */
   drawDialogue(context) {
-    fillRectangle(context, 8, 160, SCREEN_WIDTH - 16, 72, '#000000');
-    fillRectangle(context, 9, 161, SCREEN_WIDTH - 18, 70, '#fcfcfc');
-    fillRectangle(context, 11, 163, SCREEN_WIDTH - 22, 66, '#141024');
+    drawPanel(context, 8, 160, SCREEN_WIDTH - 16, 72);
     const visibleLetters = Math.floor(this.stepsInCurrentPart * LETTERS_PER_STEP);
     const writeLetterByLetter = text => drawTextLines(context, text.slice(0, visibleLetters), 20, 170, '#fcfcfc', { lineHeight: 12 });
 
@@ -10984,8 +11834,8 @@ class EndingScreen {
 
   /** @private */
   drawCredits(context) {
-    fillRectangle(context, 0, 0, SCREEN_WIDTH, SCREEN_HEIGHT, '#000000');
-    drawText(context, 'FIN', SCREEN_WIDTH / 2, 40, '#fcd800', { align: 'center', scale: 4 });
+    drawBackdrop(context, this.stepsInCurrentPart, { top: '#3a2470', bottom: '#050208' });
+    drawText(context, 'FIN', SCREEN_WIDTH / 2, 40, '#ffd84a', { align: 'center', scale: 4, outlineColor: '#140c20' });
     drawText(context, `PUNTOS ${String(this.finalScore).padStart(6, '0')}`, SCREEN_WIDTH / 2, 92, '#fcfcfc', { align: 'center' });
     drawText(context, ENDING_TEXTS.thanksForPlaying, SCREEN_WIDTH / 2, 120, '#fcfcfc', { align: 'center', scale: 2 });
     drawText(context, ENDING_TEXTS.farewell, SCREEN_WIDTH / 2, 150, '#8cc8fc', { align: 'center' });
@@ -11016,6 +11866,7 @@ const { toggleFullscreen } = __module_src_core_screen_js;
 const { recordAchievement } = __module_src_core_storage_js;
 const { soundEngine } = __module_src_audio_soundEngine_js;
 const { screenFx } = __module_src_graphics_screenFx_js;
+const { drawIrisOpening } = __module_src_graphics_uiKit_js;
 const { LEVELS } = __module_src_world_levels_js;
 const { GameSession } = __module_src_game_GameSession_js;
 const { World } = __module_src_game_World_js;
@@ -11025,6 +11876,9 @@ const { StoryScreen } = __module_src_game_screens_StoryScreen_js;
 const { LevelIntroScreen } = __module_src_game_screens_LevelIntroScreen_js;
 const { GameOverScreen } = __module_src_game_screens_GameOverScreen_js;
 const { EndingScreen } = __module_src_game_screens_EndingScreen_js;
+
+/** Pasos que tarda en abrirse el iris al cambiar de pantalla. */
+const IRIS_OPENING_STEPS = 26;
 
 class Game {
   /**
@@ -11038,6 +11892,8 @@ class Game {
     this.activeScreen = null;
     /** Pantalla del paso anterior, para reiniciar los efectos al cambiar de pantalla. */
     this.previousScreen = null;
+    /** Pasos desde el último cambio de pantalla (para la transición de iris). */
+    this.transitionSteps = IRIS_OPENING_STEPS;
   }
 
   /** Muestra la pantalla de título. */
@@ -11052,7 +11908,9 @@ class Game {
     if (this.activeScreen !== this.previousScreen) {
       screenFx.reset();
       this.previousScreen = this.activeScreen;
+      this.transitionSteps = 0;
     }
+    this.transitionSteps++;
     screenFx.update();
     // Los golpes fuertes congelan la simulación unos fotogramas para dar peso.
     if (screenFx.consumeHitStop()) return;
@@ -11065,6 +11923,7 @@ class Game {
    */
   draw(context) {
     this.activeScreen.draw(context);
+    drawIrisOpening(context, this.transitionSteps / IRIS_OPENING_STEPS);
   }
 
   /* ---------------- Transiciones ---------------- */
@@ -11152,11 +12011,38 @@ const { soundEngine } = __module_src_audio_soundEngine_js;
 const { buildFont } = __module_src_graphics_font_js;
 const { buildSprites, SPRITES } = __module_src_graphics_sprites_js;
 const { Game } = __module_src_game_Game_js;
+const { screenFx } = __module_src_graphics_screenFx_js;
 
 /** Identificador del `<canvas>` en `page.html`. */
 const CANVAS_ELEMENT_ID = 'game';
 /** Añadiendo "?debug" a la dirección, el juego queda accesible desde la consola para probarlo. */
 const IS_DEBUG_MODE = new URLSearchParams(window.location.search).has('debug');
+
+/** Calidad forzada con "?quality=0|1|2" (si no se indica, se ajusta sola). */
+const FORCED_QUALITY = new URLSearchParams(window.location.search).get('quality');
+/** Fotogramas que se miden antes de decidir si el equipo va justo. */
+const QUALITY_CHECK_FRAMES = 90;
+/** Si el fotograma medio tarda más de esto (ms), se baja la calidad un nivel. */
+const SLOW_FRAME_MILLISECONDS = 24;
+
+/** Baja la calidad del acabado de imagen si los fotogramas tardan demasiado. */
+function createQualityMonitor() {
+  let lastTimestamp = 0;
+  let measuredFrames = 0;
+  let totalMilliseconds = 0;
+  return function onFrame(timestamp) {
+    if (FORCED_QUALITY !== null) return;
+    if (lastTimestamp) {
+      totalMilliseconds += timestamp - lastTimestamp;
+      measuredFrames++;
+    }
+    lastTimestamp = timestamp;
+    if (measuredFrames < QUALITY_CHECK_FRAMES) return;
+    if (totalMilliseconds / measuredFrames > SLOW_FRAME_MILLISECONDS && screenFx.quality < 2) screenFx.quality++;
+    measuredFrames = 0;
+    totalMilliseconds = 0;
+  };
+}
 
 function startSuperPaco() {
   const screen = createGameScreen(CANVAS_ELEMENT_ID);
@@ -11170,14 +12056,17 @@ function startSuperPaco() {
 
   const game = new Game({ controls: input });
   game.start();
-  if (IS_DEBUG_MODE) window.superPacoDebug = { game, input, soundEngine, sprites: SPRITES };
+  if (IS_DEBUG_MODE) window.superPacoDebug = { game, input, soundEngine, sprites: SPRITES, screen, fx: screenFx };
 
+  if (FORCED_QUALITY !== null) screenFx.quality = Math.min(2, Math.max(0, Number(FORCED_QUALITY) || 0));
+  const monitorQuality = createQualityMonitor();
   startFixedStepGameLoop({
     update() {
       input.update();
       game.update();
     },
     render() {
+      monitorQuality(performance.now());
       game.draw(screen.beginFrame());
       screen.present();
     }

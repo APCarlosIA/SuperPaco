@@ -9,7 +9,7 @@
  */
 import { RENDER_SCALE } from '../config/constants.js';
 import { createCanvas } from '../core/canvas.js';
-import { scale3x, addOutline } from './hd.js';
+import { addOutline } from './hd.js';
 import { GLYPH_BITMAPS, ACCENT_MARKS, ACCENTED_CHARACTERS, GLYPH_WIDTH } from './fontGlyphs.js';
 
 /** Ancho que ocupa cada carácter en pantalla (5 píxeles de letra + 1 de separación). */
@@ -100,16 +100,13 @@ function paintWhiteText(text) {
  * @private
  * @returns {{canvas: HTMLCanvasElement, padding: number}} `padding` en píxeles de alta resolución.
  */
-function createTextImage(text, color, scale, shadowColor, outlineColor) {
+function createTextImage(text, color, scale, shadowColor, outlineColor, outlineWidth) {
   const targetScale = RENDER_SCALE * scale;
   const white = paintWhiteText(text);
-  // Las letras pequeñas se amplían tal cual (así se leen mejor); los títulos grandes
-  // pasan por Scale3x para redondear las diagonales.
-  const enlarged = scale > 1 ? scale3x(white) : white;
+  // Las letras se amplían tal cual: así cada letra mantiene su forma y se lee bien.
   const fill = createCanvas(white.width * targetScale, white.height * targetScale, context => {
-    context.imageSmoothingEnabled = scale > 1;
-    context.imageSmoothingQuality = 'high';
-    context.drawImage(enlarged, 0, 0, white.width * targetScale, white.height * targetScale);
+    context.imageSmoothingEnabled = false;
+    context.drawImage(white, 0, 0, white.width * targetScale, white.height * targetScale);
     const gradient = context.createLinearGradient(0, ACCENT_ROWS * targetScale, 0, (ACCENT_ROWS + 7) * targetScale);
     gradient.addColorStop(0, shiftColor(color, 0.3));
     gradient.addColorStop(0.5, color);
@@ -119,7 +116,7 @@ function createTextImage(text, color, scale, shadowColor, outlineColor) {
     context.fillRect(0, 0, white.width * targetScale, white.height * targetScale);
   });
 
-  const outlineThickness = outlineColor ? Math.max(2, Math.round(targetScale * 0.85)) : 0;
+  const outlineThickness = outlineColor ? (outlineWidth || Math.max(2, Math.round(targetScale * 0.85))) : 0;
   const shadowOffset = shadowColor ? Math.max(2, Math.round(targetScale * 0.9)) : 0;
   const padding = Math.max(outlineThickness, 0) + (shadowOffset ? 1 : 0);
   const body = outlineColor ? addOutline(fill, outlineThickness, outlineColor) : fill;
@@ -140,12 +137,12 @@ function createTextImage(text, color, scale, shadowColor, outlineColor) {
 }
 
 /** Devuelve (y guarda en caché) la imagen de un texto con su estilo. */
-function getTextImage(text, color, scale, shadowColor, outlineColor) {
-  const cacheKey = `${text}|${color}|${scale}|${shadowColor || ''}|${outlineColor || ''}`;
+function getTextImage(text, color, scale, shadowColor, outlineColor, outlineWidth) {
+  const cacheKey = `${text}|${color}|${scale}|${shadowColor || ''}|${outlineColor || ''}|${outlineWidth || ''}`;
   let image = textImageCache.get(cacheKey);
   if (!image) {
     if (textImageCache.size >= MAX_CACHED_TEXT_IMAGES) textImageCache.clear();
-    image = createTextImage(text, color, scale, shadowColor, outlineColor);
+    image = createTextImage(text, color, scale, shadowColor, outlineColor, outlineWidth);
     textImageCache.set(cacheKey, image);
   }
   return image;
@@ -165,14 +162,15 @@ function getTextImage(text, color, scale, shadowColor, outlineColor) {
  * @param {number} [options.scale] Ampliación (2 = letras el doble de grandes).
  * @param {string} [options.shadowColor] Si se indica, dibuja una sombra desplazada.
  * @param {string} [options.outlineColor] Si se indica, dibuja un contorno alrededor.
+ * @param {number} [options.outlineWidth] Grosor del contorno en píxeles de pantalla (por defecto, proporcional al tamaño).
  */
-export function drawText(context, text, x, y, color = '#fcfcfc', { align = 'left', scale = 1, shadowColor, outlineColor } = {}) {
+export function drawText(context, text, x, y, color = '#fcfcfc', { align = 'left', scale = 1, shadowColor, outlineColor, outlineWidth } = {}) {
   const upperText = String(text).toUpperCase();
   if (!upperText.length) return;
   let left = x;
   if (align === 'center') left = x - measureTextWidth(upperText, scale) / 2;
   else if (align === 'right') left = x - measureTextWidth(upperText, scale);
-  const { canvas, padding } = getTextImage(upperText, color, scale, shadowColor, outlineColor);
+  const { canvas, padding } = getTextImage(upperText, color, scale, shadowColor, outlineColor, outlineWidth);
   const snappedLeft = Math.round(left * RENDER_SCALE) / RENDER_SCALE;
   const snappedTop = Math.round(y * RENDER_SCALE) / RENDER_SCALE;
   context.drawImage(

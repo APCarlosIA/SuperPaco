@@ -20,6 +20,7 @@ import {
 import { BUTTON } from '../core/input.js';
 import { random, randomBetween, randomInteger, randomItem, rectanglesOverlap, clamp } from '../core/math.js';
 import { soundEngine, SOUND_EFFECT } from '../audio/soundEngine.js';
+import { screenFx } from '../graphics/screenFx.js';
 import { drawText, measureTextWidth } from '../graphics/font.js';
 import { getThemeAssets } from '../graphics/themeAssets.js';
 import { FINAL_ROOM_END_COLUMN } from '../world/levels.js';
@@ -33,7 +34,7 @@ import { TaxInvoice } from '../entities/hazards/TaxInvoice.js';
 import { createEntityForSpawnPoint, spawnsAheadOfCamera, isEnemySpawn } from './entityFactory.js';
 import { handlePlayerHeadBump } from './blockInteractions.js';
 import { GoalSequence } from './GoalSequence.js';
-import { drawBackground, drawDecorations, drawTileLayer, drawRain } from './worldRenderer.js';
+import { drawBackground, drawDecorations, drawTileLayer, drawRain, drawShadows, drawLighting, drawTorches } from './worldRenderer.js';
 import { drawHud } from './hud.js';
 
 /** Fases del mundo. */
@@ -254,6 +255,9 @@ export class World {
    */
   rewardStomp(enemy, player, exclamation) {
     player.stompCombo++;
+    this.spawnImpact(enemy.centerX, enemy.y + enemy.height * 0.5);
+    screenFx.hitStop(2 + Math.min(3, player.stompCombo));
+    screenFx.shake(0.7 + player.stompCombo * 0.15, 8);
     this.awardPoints(this.getComboPoints(player.stompCombo), enemy.centerX, enemy.y - 4);
     let message = exclamation || null;
     if (!message && enemy.catchphrases && random() < 0.4) message = randomItem(enemy.catchphrases);
@@ -280,6 +284,18 @@ export class World {
     this.addVisualEffect(new VisualEffect(EFFECT_KIND.PUFF, x, y));
   }
 
+  /** Impacto vistoso: onda expansiva, estrellitas y chispas (pisotones, golpes). */
+  spawnImpact(x, y, color = '#ffffff') {
+    this.addVisualEffect(new VisualEffect(EFFECT_KIND.RING, x, y, { color, size: 14 }));
+    for (let star = 0; star < 5; star++) {
+      const angle = (star / 5) * Math.PI * 2 + randomBetween(-0.3, 0.3);
+      this.addVisualEffect(new VisualEffect(EFFECT_KIND.STAR, x, y, {
+        velocityX: Math.cos(angle) * randomBetween(1.1, 2), velocityY: Math.sin(angle) * randomBetween(1.1, 2) - 0.6,
+        color: star % 2 ? '#ffe45a' : '#ffffff', lifetime: 22, size: 3.4
+      }));
+    }
+  }
+
   spawnSpark(x, y, color = '#fcd800') {
     this.addVisualEffect(new VisualEffect(EFFECT_KIND.SPARK, x, y, { velocityX: randomBetween(-0.6, 0.6), velocityY: randomBetween(-1.2, -0.2), color, lifetime: 20 }));
   }
@@ -295,6 +311,8 @@ export class World {
   /** Hace temblar la pantalla unos pasos (explosiones, golpes al jefe). */
   shakeScreen(steps) {
     this.shakeStepsLeft = Math.max(this.shakeStepsLeft, steps);
+    screenFx.shake(1.4 + steps * 0.18, steps * 2);
+    screenFx.flash('#ffffff', 0.18);
   }
 
   /** Congela la acción unos pasos (al crecer o al recibir un golpe). */
@@ -305,6 +323,11 @@ export class World {
   /** Paco recoge una peseta suelta o de un bloque. */
   collectCoin() {
     soundEngine.playSoundEffect(SOUND_EFFECT.COIN);
+    for (let star = 0; star < 3; star++) {
+      this.addVisualEffect(new VisualEffect(EFFECT_KIND.STAR, this.player.centerX + randomBetween(-5, 5), this.player.y + randomBetween(0, 8), {
+        velocityX: randomBetween(-0.8, 0.8), velocityY: randomBetween(-1.4, -0.4), color: '#ffe45a', lifetime: 20, size: 2.8
+      }));
+    }
     if (this.session.addCoin()) {
       soundEngine.playSoundEffect(SOUND_EFFECT.EXTRA_LIFE);
       this.showBanner(GAMEPLAY_MESSAGES.hundredCoins, 100);
@@ -430,6 +453,10 @@ export class World {
     if (player.isBig) player.setPowerLevel(POWER_LEVEL.SMALL);
     this.phase = WORLD_PHASE.PLAYER_DYING;
     this.stepsInPhase = 0;
+    screenFx.flash(burned ? '#ff7a30' : '#ff3a3a', 0.55);
+    screenFx.hitStop(10);
+    screenFx.shake(2.6, 22);
+    this.spawnImpact(player.centerX, player.centerY, '#ff5a5a');
     this.didFallIntoPit = fellIntoPit;
     this.isPaused = false;
     this.lifeLostMessage = randomItem(burned ? BURNED_MESSAGES : LIFE_LOST_MESSAGES);
@@ -706,10 +733,12 @@ export class World {
       stepCounter: this.stepCounter
     }, cameraX);
     for (const platform of this.platforms) platform.draw(context, cameraX);
+    drawShadows(context, { tileMap: this.tileMap, entities: this.entities, player: this.player }, cameraX);
     for (const entity of this.entities) if (!entity.drawsBehindTiles) entity.draw(context, cameraX);
     this.player.draw(context, cameraX);
     for (const effect of this.visualEffects) effect.draw(context, cameraX);
     if (this.theme.hasRain) drawRain(context, this.rainDrops);
+    this.drawAtmosphere(context, cameraX);
 
     drawHud(context, {
       session: this.session,
@@ -720,6 +749,23 @@ export class World {
     });
     this.drawMessages(context);
     if (this.isPaused) this.drawPauseOverlay(context);
+  }
+
+  /**
+   * @private Iluminación y tono de color del nivel (luz de Paco, antorchas, oscuridad).
+   * @param {CanvasRenderingContext2D} context
+   * @param {number} cameraX
+   */
+  drawAtmosphere(context, cameraX) {
+    const theme = this.theme;
+    screenFx.grade = theme.grade || { color: '#000000', alpha: 0, mode: 'soft-light' };
+    screenFx.vignette = theme.vignette === undefined ? 0.5 : theme.vignette;
+    screenFx.bloom = theme.bloom === undefined ? 0.28 : theme.bloom;
+    if (!theme.lighting) return;
+    const lights = [];
+    if (theme.name === 'hacienda') lights.push(...drawTorches(context, cameraX, this.stepCounter));
+    if (!this.player.isDead) lights.push({ x: this.player.centerX - cameraX, y: this.player.centerY, radius: theme.lighting.playerLightRadius });
+    drawLighting(context, theme.lighting, lights);
   }
 
   /**
