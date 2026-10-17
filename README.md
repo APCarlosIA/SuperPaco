@@ -8,6 +8,14 @@ pregunta: ¿la tortilla lleva cebolla?
 Todo el arte, la música y los niveles son originales y se generan con código:
 no hay imágenes ni sonidos externos.
 
+![Pantalla de título](docs/capturas/titulo.png)
+
+| Madrid | Sevilla |
+| --- | --- |
+| ![Madrid](docs/capturas/madrid.png) | ![Sevilla](docs/capturas/sevilla.png) |
+| **Valencia** | **Castillo de Hacienda** |
+| ![Valencia](docs/capturas/valencia.png) | ![Hacienda](docs/capturas/hacienda.png) |
+
 ## Cómo jugar
 
 Abre **`dist/SuperPaco.html`** con doble clic. Funciona en cualquier navegador
