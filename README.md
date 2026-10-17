@@ -179,3 +179,7 @@ navegadores.
   tests en `tests/enemies.test.js`.
 - **Nueva canción:** escríbela en `songs.js` con la notación de
   `musicNotation.js`; el test comprueba que las pistas duran lo mismo.
+
+## Licencia
+
+[MIT](LICENSE): puedes usar, modificar y compartir el código libremente.
