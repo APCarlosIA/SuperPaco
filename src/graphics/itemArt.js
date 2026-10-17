@@ -9,7 +9,7 @@ export const ITEM_ART = {
   peseta: {
     width: 16, height: 14, frames: 3, frameNames: index => `peseta_spin${index}`,
     paint(context, frame) {
-      const squeeze = [1, 0.55, 0.16][frame];
+      const squeeze = [1, 0.66, 0.34][frame];
       context.save();
       context.translate(8, 7);
       context.scale(squeeze, 1);

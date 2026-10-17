@@ -8,7 +8,8 @@
  */
 import { SCREEN_WIDTH, TILE_SIZE, GROUND_SURFACE_Y } from '../../config/constants.js';
 import { BUTTON } from '../../core/input.js';
-import { loadProgress } from '../../core/storage.js';
+import { loadProgress, recordAchievement } from '../../core/storage.js';
+import { createSecretCodeTracker, CHEF_CODE } from '../../core/secretCode.js';
 import { soundEngine, SOUND_EFFECT } from '../../audio/soundEngine.js';
 import { SPRITES, drawSprite } from '../../graphics/sprites.js';
 import { pacoSpriteName } from '../../graphics/spriteData.js';
@@ -38,6 +39,9 @@ export class TitleScreen {
     this.highScore = progress.highScore;
     this.highestUnlockedLevel = Math.min(progress.highestUnlockedLevel, LEVELS.length - 1);
     this.continueLevelIndex = this.highestUnlockedLevel;
+    this.chefCodeTracker = createSecretCodeTracker(CHEF_CODE);
+    /** Pasos que quedan de mostrar el aviso del truco del cocinero. */
+    this.chefToastSteps = 0;
     soundEngine.playMusic('flamenco', { restart: true });
   }
 
@@ -54,16 +58,36 @@ export class TitleScreen {
     if (this.game.controls.wasPressed(BUTTON.DOWN)) this.moveSelection(1, options.length);
     if (this.game.controls.wasPressed(BUTTON.UP)) this.moveSelection(-1, options.length);
 
+    const unlockedChefMode = this.checkSecretCode();
     const selectedOption = options[this.selectedOptionIndex];
     if (selectedOption === MENU_OPTION.CONTINUE) this.updateContinueLevelChoice();
     if (this.stepCounter % TAGLINE_DURATION_STEPS === 0) this.taglineIndex = (this.taglineIndex + 1) % TITLE_TAGLINES.length;
 
-    if (this.stepCounter > INPUT_COOLDOWN_STEPS && this.game.controls.wasConfirmPressed()) {
+    if (this.stepCounter > INPUT_COOLDOWN_STEPS && !unlockedChefMode && this.game.controls.wasConfirmPressed()) {
       soundEngine.playSoundEffect(SOUND_EFFECT.MENU_CONFIRM);
       if (selectedOption === MENU_OPTION.NEW_GAME) this.game.startNewGame(0);
       else if (selectedOption === MENU_OPTION.CONTINUE) this.game.startNewGame(this.continueLevelIndex);
       else this.game.showControlsScreen();
     }
+  }
+
+  /**
+   * @private
+   * Vigila el truco secreto ↑↑↓↓◀▶◀▶ B A: activa el modo cocinero.
+   * @returns {boolean} true si se ha completado en este paso.
+   */
+  checkSecretCode() {
+    if (this.chefToastSteps > 0) this.chefToastSteps--;
+    let completed = false;
+    for (const button of [BUTTON.UP, BUTTON.DOWN, BUTTON.LEFT, BUTTON.RIGHT, BUTTON.RUN, BUTTON.JUMP]) {
+      if (this.game.controls.wasPressed(button) && this.chefCodeTracker.feed(button)) completed = true;
+    }
+    if (!completed) return false;
+    this.game.session.chefMode = !this.game.session.chefMode;
+    recordAchievement({ chefMode: this.game.session.chefMode });
+    this.chefToastSteps = 150;
+    soundEngine.playSoundEffect(SOUND_EFFECT.SECRET);
+    return true;
   }
 
   /** @private */
@@ -92,6 +116,10 @@ export class TitleScreen {
     this.drawLogo(context);
     this.drawMenu(context);
     this.drawWalkingCharacters(context);
+    if (this.chefToastSteps > 0) {
+      drawPanel(context, 60, 150, 200, 20);
+      drawText(context, this.game.session.chefMode ? '¡MODO COCINERO ACTIVADO!' : 'MODO COCINERO APAGADO', SCREEN_WIDTH / 2, 157, '#ffffff', { align: 'center', outlineColor: '#140c20' });
+    }
     drawText(context, TITLE_TAGLINES[this.taglineIndex], SCREEN_WIDTH / 2, 226, '#fcfcfc', { align: 'center', outlineColor: '#140c20' });
   }
 
@@ -145,7 +173,7 @@ export class TitleScreen {
     const walkerX = ((this.stepCounter * 1.2) % (SCREEN_WIDTH + 60)) - 30;
     const runFrame = (Math.floor(this.stepCounter / 3) % 8) + 1;
     const guiriFrame = Math.floor(this.stepCounter / 8) % 2 ? 1 : 2;
-    drawSprite(context, SPRITES[pacoSpriteName('small', `run${runFrame}`, 'normal')], walkerX, GROUND_SURFACE_Y - 16);
+    drawSprite(context, SPRITES[pacoSpriteName('small', `run${runFrame}`, this.game.session.chefMode ? 'chef' : 'normal')], walkerX, GROUND_SURFACE_Y - 16);
     drawSprite(context, SPRITES[`guiri_frame${guiriFrame}`], walkerX - 60, GROUND_SURFACE_Y - 16, { mirrored: true });
   }
 }

@@ -30,6 +30,11 @@ export const screenFx = {
    * 2 = solo viñeta. Baja sola en ordenadores lentos (ver main.js).
    */
   quality: 0,
+  /** Intensidad actual de la distorsión de las maravillas (0 a 1) y a la que tiende. */
+  wonder: 0,
+  wonderTarget: 0,
+  /** Reloj de las ondas de la maravilla. */
+  time: 0,
 
   /**
    * Hace temblar la pantalla.
@@ -69,6 +74,9 @@ export const screenFx = {
 
   /** Avanza los efectos un paso (siempre, aunque la simulación esté congelada). */
   update() {
+    this.time++;
+    this.wonder += (this.wonderTarget - this.wonder) * 0.06;
+    if (this.wonder < 0.005) this.wonder = 0;
     if (this.shakeStepsLeft > 0) this.shakeStepsLeft--;
     this.flashAlpha = Math.max(0, this.flashAlpha - 0.045);
     this.zoomPunch = Math.max(0, this.zoomPunch - 0.006);
@@ -88,6 +96,8 @@ export const screenFx = {
     this.flashAlpha = 0;
     this.zoomPunch = 0;
     this.hitStopStepsLeft = 0;
+    this.wonder = 0;
+    this.wonderTarget = 0;
     this.grade = NO_GRADE;
     this.vignette = 0.5;
     this.bloom = 0.28;

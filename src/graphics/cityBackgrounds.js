@@ -613,5 +613,114 @@ export const CITY_PAINTERS = {
       near.fillStyle = '#6a625a'; near.fillRect(x + 97, 124, 9, 5);
     }
     haze(near, GY - 40, GY, '#05030a', 0, 0.55);
+  },
+
+  /** Taberna: paredes de madera, estantes de botellas, jamones colgando y lámparas cálidas. */
+  taberna({ far, mid, near }, random) {
+    far.fillStyle = linearGradient(far, 0, 0, 0, 240, [[0, '#24120a'], [1, '#4a2a16']]);
+    far.fillRect(0, 0, W, 240);
+    for (let x = 0; x < W; x += 16) {
+      far.fillStyle = (x / 16) % 2 ? '#5a361c' : '#4e2e18';
+      far.fillRect(x, 30, 15.4, 190);
+      far.fillStyle = 'rgba(255,200,140,0.07)'; far.fillRect(x + 1, 30, 2, 190);
+      far.strokeStyle = 'rgba(20,8,0,0.35)'; far.lineWidth = 0.4; far.beginPath(); far.moveTo(x + 6, 40); far.bezierCurveTo(x + 8, 90, x + 4, 140, x + 7, 210); far.stroke();
+    }
+    // Estantes con botellas de colores.
+    for (let x = 6; x < W; x += 128) {
+      wrapDraw(mid, x, 100, px => {
+        for (const shelfY of [70, 100, 130]) {
+          mid.fillStyle = '#2a1608'; mid.fillRect(px, shelfY, 96, 3);
+          mid.fillStyle = 'rgba(255,255,255,0.15)'; mid.fillRect(px, shelfY, 96, 0.8);
+          for (let bottle = 0; bottle < 12; bottle++) {
+            const color = pick(['#2c9c3c', '#a8322c', '#e8b848', '#3a6ae0', '#ffffff'], random);
+            const bx = px + 3 + bottle * 7.8;
+            mid.fillStyle = color; roundedRect(mid, bx, shelfY - 14, 4.2, 14, 1.4); mid.fill();
+            mid.fillRect(bx + 1.2, shelfY - 18, 1.8, 5);
+            mid.fillStyle = 'rgba(255,255,255,0.45)'; mid.fillRect(bx + 0.7, shelfY - 12, 0.9, 9);
+          }
+        }
+      });
+    }
+    // Jamones colgados y farolas.
+    for (let x = 60; x < W; x += 96) {
+      near.strokeStyle = '#2a1608'; near.lineWidth = 0.7; near.beginPath(); near.moveTo(x, 30); near.lineTo(x, 56); near.stroke();
+      near.beginPath(); near.moveTo(x - 4, 56); near.quadraticCurveTo(x - 7, 70, x - 2, 80); near.quadraticCurveTo(x + 5, 84, x + 6, 66); near.quadraticCurveTo(x + 4, 54, x - 4, 56);
+      near.fillStyle = linearGradient(near, x - 6, 56, x + 6, 84, [[0, '#d8545a'], [1, '#6a1218']]); near.fill(); strokeSoft(near, '#6a1218', 0.8, -0.5);
+      near.fillStyle = '#ffe8d8'; near.beginPath(); near.ellipse(x - 1, 74, 1.6, 2.6, 0.3, 0, TAU); near.fill();
+    }
+    for (let x = 30; x < W; x += 128) {
+      near.strokeStyle = '#2a1608'; near.lineWidth = 0.7; near.beginPath(); near.moveTo(x, 20); near.lineTo(x, 44); near.stroke();
+      near.beginPath(); near.moveTo(x - 9, 56); near.lineTo(x + 9, 56); near.lineTo(x + 4, 44); near.lineTo(x - 4, 44); near.closePath();
+      near.fillStyle = '#d83a2a'; near.fill(); strokeSoft(near, '#d83a2a', 0.8, -0.6);
+      glow(near, x, 62, 56, '#ffc070', 0.7);
+      near.fillStyle = '#fff2b0'; near.beginPath(); near.ellipse(x, 57, 5, 2, 0, 0, TAU); near.fill();
+    }
+    // Barra del fondo con taburetes.
+    for (let x = 0; x < W; x += 128) {
+      near.fillStyle = linearGradient(near, 0, GY - 34, 0, GY, [[0, '#7a4a28'], [1, '#3a2010']]); near.fillRect(x + 24, GY - 34, 80, 34);
+      near.fillStyle = '#c8905a'; near.fillRect(x + 22, GY - 37, 84, 4);
+      near.fillStyle = 'rgba(255,255,255,0.25)'; near.fillRect(x + 22, GY - 37, 84, 1);
+    }
+    haze(near, GY - 30, GY, '#1a0a04', 0, 0.45);
+  },
+
+  /** Bodega: arcos de piedra, hileras de toneles y faroles. */
+  bodega({ far, mid, near }) {
+    far.fillStyle = linearGradient(far, 0, 0, 0, 240, [[0, '#120818'], [1, '#2a1838']]);
+    far.fillRect(0, 0, W, 240);
+    for (let x = 0; x < W; x += 64) {
+      far.fillStyle = '#1a0e24'; far.beginPath(); far.moveTo(x + 4, GY); far.lineTo(x + 4, 90); far.arc(x + 32, 90, 28, Math.PI, 0); far.lineTo(x + 60, GY); far.closePath(); far.fill();
+      strokeSoft(far, '#5a4a70', 1, 0.1);
+    }
+    for (let x = 0; x < W; x += 80) {
+      wrapDraw(mid, x, 76, px => {
+        const barrel = (bx, by, scale) => {
+          mid.fillStyle = linearGradient(mid, bx - 14 * scale, 0, bx + 14 * scale, 0, [[0, '#9a5a2a'], [0.5, '#c88040'], [1, '#5a3014']]);
+          mid.beginPath(); mid.ellipse(bx, by, 14 * scale, 18 * scale, 0, 0, TAU); mid.fill(); strokeSoft(mid, '#5a3014', 1, -0.5);
+          mid.strokeStyle = '#8a8e98'; mid.lineWidth = 1.2; for (const t of [-0.5, 0.5]) { mid.beginPath(); mid.ellipse(bx, by + t * 10 * scale, 14 * scale, 3 * scale, 0, 0, Math.PI); mid.stroke(); }
+          mid.fillStyle = '#d8b060'; mid.beginPath(); mid.arc(bx, by + 4 * scale, 2.2 * scale, 0, TAU); mid.fill();
+        };
+        barrel(px + 20, GY - 20, 1); barrel(px + 52, GY - 20, 1); barrel(px + 36, GY - 52, 0.9);
+      });
+    }
+    for (let x = 30; x < W; x += 128) {
+      near.strokeStyle = '#2a2030'; near.lineWidth = 0.8; near.beginPath(); near.moveTo(x, 30); near.lineTo(x, 74); near.stroke();
+      near.fillStyle = '#ffd070'; roundedRect(near, x - 5, 74, 10, 14, 3); near.fill(); strokeSoft(near, '#2a2030', 1, 0);
+      glow(near, x, 82, 58, '#ffb050', 0.7);
+    }
+    haze(near, GY - 36, GY, '#0a0412', 0, 0.5);
+  },
+
+  /** Gruta de cristales: cuevas azules con cristales brillantes y setas luminosas. */
+  gruta({ far, mid, near }, random) {
+    far.fillStyle = linearGradient(far, 0, 0, 0, 240, [[0, '#02101a'], [1, '#0a3040']]);
+    far.fillRect(0, 0, W, 240);
+    for (let s = 0; s < 40; s++) { const x = random() * W; const y = random() * 190; far.fillStyle = 'rgba(160,255,240,0.5)'; far.beginPath(); far.arc(x, y, 0.5 + random() * 0.8, 0, TAU); far.fill(); }
+    ridge(far, { baseY: 50, amplitude: 22, periods: 4, phase: 0.6, fill: '#06202c', bottom: 0 });
+    const crystalColors = [['#7affea', '#1a8a9a'], ['#ff8aef', '#9a2a8a'], ['#8ab0ff', '#2a3aa8']];
+    for (let x = 12; x < W; x += 54) {
+      wrapDraw(mid, x, 40, px => {
+        const [light, dark] = pick(crystalColors, random);
+        for (let c = 0; c < 4; c++) {
+          const cx = px + c * 7 + random() * 3; const h = 22 + random() * 30; const w = 6 + random() * 4; const lean = (random() - 0.5) * 6;
+          polygon(mid, [[cx, GY], [cx + w, GY], [cx + w / 2 + lean, GY - h]], linearGradient(mid, cx, GY - h, cx + w, GY, [[0, light], [1, dark]]), -0.5);
+          mid.fillStyle = 'rgba(255,255,255,0.4)'; mid.beginPath(); mid.moveTo(cx + w * 0.35, GY - h * 0.2); mid.lineTo(cx + w / 2 + lean, GY - h); mid.lineTo(cx + w * 0.5, GY - h * 0.2); mid.closePath(); mid.fill();
+        }
+        glow(mid, px + 14, GY - 24, 44, light, 0.5);
+      });
+    }
+    // Estalactitas y setas luminosas.
+    for (let x = 6; x < W; x += 22) {
+      const h = 14 + random() * 36;
+      polygon(near, [[x, 0], [x + 12, 0], [x + 6, h]], linearGradient(near, 0, 0, 0, h, [[0, '#0a2634'], [1, '#2a6a80']]), -0.5);
+    }
+    for (let x = 30; x < W; x += 90) {
+      wrapDraw(near, x, 20, px => {
+        near.fillStyle = '#e8f8ff'; near.fillRect(px + 4, GY - 12, 3, 12);
+        near.fillStyle = linearGradient(near, 0, GY - 20, 0, GY - 10, [[0, '#7affea'], [1, '#1a8a9a']]); near.beginPath(); near.ellipse(px + 5.5, GY - 12, 9, 6, 0, Math.PI, 0); near.fill(); strokeSoft(near, '#1a8a9a', 0.8, -0.5);
+        glow(near, px + 5.5, GY - 14, 34, '#7affea', 0.6);
+      });
+    }
+    haze(near, GY - 30, GY, '#02141c', 0, 0.45);
   }
 };

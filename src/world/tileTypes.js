@@ -26,14 +26,22 @@ export const TILE = Object.freeze({
   LAVA: 12,
   WATER: 13,
   BRIDGE: 14,
-  COIN: 16
+  COIN: 16,
+  /**
+   * Plataformas "al ritmo": los grupos A y B se alternan con cada pulso de la
+   * Flor Maravilla del compás. ON = sólida; OFF = fantasma (se ve pero se atraviesa).
+   */
+  BEAT_A_ON: 17,
+  BEAT_A_OFF: 18,
+  BEAT_B_ON: 19,
+  BEAT_B_OFF: 20
 });
 
 /** Baldosas que bloquean el paso en todas las direcciones. */
 const SOLID_TILES = new Set([
   TILE.GROUND, TILE.BRICK, TILE.QUESTION_BLOCK, TILE.USED_BLOCK, TILE.AZULEJO,
   TILE.BARREL_TOP_LEFT, TILE.BARREL_TOP_RIGHT, TILE.BARREL_BODY_LEFT, TILE.BARREL_BODY_RIGHT,
-  TILE.BRIDGE
+  TILE.BRIDGE, TILE.BEAT_A_ON, TILE.BEAT_B_ON
 ]);
 
 /**
@@ -67,3 +75,27 @@ export const BLOCK_CONTENT = Object.freeze({
   /** Décimo de lotería: vida extra. */
   EXTRA_LIFE: 'extraLife'
 });
+
+/**
+ * ¿Es una plataforma "al ritmo"?
+ * @param {number} tileId
+ * @returns {boolean}
+ */
+export function isBeatTile(tileId) {
+  return tileId >= TILE.BEAT_A_ON && tileId <= TILE.BEAT_B_OFF;
+}
+
+/**
+ * Invierte las plataformas al ritmo: las sólidas pasan a fantasma y viceversa.
+ * @param {number} tileId
+ * @returns {number}
+ */
+export function toggleBeatTile(tileId) {
+  switch (tileId) {
+    case TILE.BEAT_A_ON: return TILE.BEAT_A_OFF;
+    case TILE.BEAT_A_OFF: return TILE.BEAT_A_ON;
+    case TILE.BEAT_B_ON: return TILE.BEAT_B_OFF;
+    case TILE.BEAT_B_OFF: return TILE.BEAT_B_ON;
+    default: return tileId;
+  }
+}

@@ -170,7 +170,15 @@ export class Enemy extends Entity {
    */
   drawCenteredSprite(context, spriteName, cameraX, { mirrored = false, offsetX = 0 } = {}) {
     const sprite = SPRITES[spriteName];
-    drawSprite(context, sprite, this.centerX - sprite.width / 2 - cameraX + offsetX, this.bottom - sprite.height, { mirrored, upsideDown: this.isKnockedOut });
+    // En el desfile de la maravilla, los enemigos bailan: botan y se estiran al ritmo.
+    const beat = this.isDancing ? Math.sin(this.ageInSteps / 5) : 0;
+    const danceOffset = this.isDancing ? -Math.abs(beat) * 3 : 0;
+    drawSprite(context, sprite, this.centerX - sprite.width / 2 - cameraX + offsetX, this.bottom - sprite.height + danceOffset, {
+      mirrored: mirrored !== (this.isDancing && beat > 0.6),
+      upsideDown: this.isKnockedOut,
+      scaleX: this.isDancing ? 1.15 - Math.abs(beat) * 0.15 : 1,
+      scaleY: this.isDancing ? 1 + Math.abs(beat) * 0.15 : 1
+    });
   }
 
   /**

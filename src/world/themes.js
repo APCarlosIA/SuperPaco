@@ -145,5 +145,37 @@ export const THEMES = Object.freeze({
     hasClouds: false, groundPlant: null, pitFilling: 'lava', hasCeiling: true,
     grade: { color: '#6a3aff', alpha: 0.2, mode: 'soft-light' }, vignette: 0.68, bloom: 0.34,
     lighting: { darkness: 0.52, color: '#04020c', playerLightRadius: 96 }
+  },
+  /* ---- Salas secretas (no son ciudades; se entra por puertas y alcantarillas) ---- */
+  taberna: {
+    name: 'taberna',
+    skyColors: ['#2a160c', '#3c2012', '#5a3018'],
+    ground: { pattern: 'floorTiles', baseColor: '#8a5a34', lightColor: '#c8905a', darkColor: '#5a3a20', mortarColor: '#2c1a0e' },
+    brickColors: { base: '#b8662a', mortar: '#4a2410', highlight: '#e8a060' },
+    oneWayPlatform: { kind: 'plank', primaryColor: '#a8683a', secondaryColor: '#6a3c1a', edgeColor: '#2c1a0e' },
+    movingPlatformLook: 'wood',
+    hasClouds: false, groundPlant: null, pitFilling: null, hasCeiling: true,
+    grade: { color: '#ffb060', alpha: 0.18, mode: 'soft-light' }, vignette: 0.55, bloom: 0.34
+  },
+  bodega: {
+    name: 'bodega',
+    skyColors: ['#14081c', '#201030', '#2c1840'],
+    ground: { pattern: 'stoneBlocks', baseColor: '#6a5a78', lightColor: '#9484a4', darkColor: '#40344c', mortarColor: '#1c1428' },
+    brickColors: { base: '#8a4a5a', mortar: '#3a1c28', highlight: '#c0809a' },
+    oneWayPlatform: { kind: 'plank', primaryColor: '#7a5a48', secondaryColor: '#4a3428', edgeColor: '#1c1428' },
+    movingPlatformLook: 'wood',
+    hasClouds: false, groundPlant: null, pitFilling: null, hasCeiling: true,
+    grade: { color: '#a04aff', alpha: 0.2, mode: 'soft-light' }, vignette: 0.62, bloom: 0.34,
+    lighting: { darkness: 0.3, color: '#08020e', playerLightRadius: 100 }
+  },
+  gruta: {
+    name: 'gruta',
+    skyColors: ['#04141c', '#082838', '#0c3a4c'],
+    ground: { pattern: 'speckled', baseColor: '#2c4a5c', lightColor: '#5a8aa0', darkColor: '#162c3a', mortarColor: '#0a1822', topLayer: 'rock' },
+    brickColors: { base: '#3a6a80', mortar: '#102430', highlight: '#78b0c8' },
+    oneWayPlatform: { kind: 'plank', primaryColor: '#4a7a90', secondaryColor: '#2c4c5c', edgeColor: '#0a1822' },
+    movingPlatformLook: 'stone',
+    hasClouds: false, groundPlant: null, pitFilling: null, hasCeiling: true,
+    grade: { color: '#3affd0', alpha: 0.18, mode: 'soft-light' }, vignette: 0.6, bloom: 0.5
   }
 });

@@ -6,6 +6,8 @@ import { GAME_RULES } from '../config/constants.js';
 
 export class GameSession {
   constructor() {
+    /** Truco del cocinero descubierto (se conserva entre partidas). */
+    this.chefMode = false;
     this.startNewGame(0);
   }
 
@@ -22,6 +24,47 @@ export class GameSession {
     this.hasReachedCheckpoint = false;
     /** Poder con el que Paco empezará el siguiente nivel (se conserva al superar uno). */
     this.carriedPowerLevel = 0;
+    /** Semillas Maravilla conseguidas (índices de nivel). */
+    this.seeds = new Set();
+    /** Monedas gigantes conseguidas, con clave "nivel:número". */
+    this.bigCoins = new Set();
+  }
+
+  /**
+   * Anota la Semilla Maravilla de un nivel.
+   * @param {number} levelIndex
+   * @returns {boolean} true si es la primera vez que se consigue.
+   */
+  collectSeed(levelIndex) {
+    const isNew = !this.seeds.has(levelIndex);
+    this.seeds.add(levelIndex);
+    this.score += 2000;
+    return isNew;
+  }
+
+  /**
+   * Anota una moneda gigante.
+   * @param {number} levelIndex
+   * @param {number} coinNumber
+   * @returns {boolean} true si es la primera vez que se consigue.
+   */
+  collectBigCoin(levelIndex, coinNumber) {
+    const key = `${levelIndex}:${coinNumber}`;
+    const isNew = !this.bigCoins.has(key);
+    this.bigCoins.add(key);
+    this.score += 500;
+    return isNew;
+  }
+
+  /**
+   * Monedas gigantes conseguidas en un nivel.
+   * @param {number} levelIndex
+   * @returns {number}
+   */
+  countBigCoinsInLevel(levelIndex) {
+    let count = 0;
+    for (const key of this.bigCoins) if (key.startsWith(`${levelIndex}:`)) count++;
+    return count;
   }
 
   /** @param {number} points */

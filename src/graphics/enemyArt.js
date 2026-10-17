@@ -12,9 +12,10 @@ import { HUMAN_ENEMIES } from './enemyArtHumans.js';
 import { ANIMAL_ENEMIES } from './enemyArtAnimals.js';
 import { FLYER_ENEMIES } from './enemyArtFlyers.js';
 import { ITEM_ART } from './itemArt.js';
+import { CAMEO_ART } from './enemyArtCameos.js';
 
 /** Todos los dibujos, por identificador. */
-const ALL_ART = { ...HUMAN_ENEMIES, ...ANIMAL_ENEMIES, ...FLYER_ENEMIES, ...ITEM_ART };
+const ALL_ART = { ...HUMAN_ENEMIES, ...ANIMAL_ENEMIES, ...FLYER_ENEMIES, ...ITEM_ART, ...CAMEO_ART };
 
 /**
  * Crea todos los sprites vectoriales.

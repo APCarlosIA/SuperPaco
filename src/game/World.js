@@ -31,11 +31,15 @@ import { POWER_UP_KIND } from '../entities/PowerUpItem.js';
 import { VisualEffect, EFFECT_KIND } from '../entities/effects/VisualEffect.js';
 import { FallingFirecracker } from '../entities/hazards/FallingFirecracker.js';
 import { TaxInvoice } from '../entities/hazards/TaxInvoice.js';
+import { FallingCoin } from '../entities/wonder/FallingCoin.js';
 import { createEntityForSpawnPoint, spawnsAheadOfCamera, isEnemySpawn } from './entityFactory.js';
 import { handlePlayerHeadBump } from './blockInteractions.js';
 import { GoalSequence } from './GoalSequence.js';
 import { drawBackground, drawDecorations, drawTileLayer, drawRain, drawShadows, drawLighting, drawTorches } from './worldRenderer.js';
 import { drawHud } from './hud.js';
+import { WonderDirector } from './WonderDirector.js';
+import { AreaManager } from './AreaManager.js';
+import { drawIrisOpening } from '../graphics/uiKit.js';
 
 /** Fases del mundo. */
 export const WORLD_PHASE = Object.freeze({ PLAYING: 'playing', PLAYER_DYING: 'playerDying' });
@@ -91,6 +95,8 @@ export class World {
 
     this.level = this.levelDefinition.build();
     this.tileMap = this.level.tileMap;
+    /** Monedas gigantes del nivel principal (para el marcador, aunque Paco esté en una sala). */
+    this.levelBigCoinTotal = this.level.bigCoinCount;
     // Solo los datos del tema: las imágenes se piden al dibujar, así la lógica
     // del mundo funciona sin navegador (en los tests).
     this.theme = THEMES[this.level.themeName];
@@ -127,6 +133,9 @@ export class World {
     this.didFallIntoPit = false;
 
     this.createPlayer();
+    /** Director de la Flor Maravilla del nivel y gestor de las salas secretas. */
+    this.wonder = new WonderDirector(this);
+    this.areas = new AreaManager(this);
     this.placeCameraOnPlayer();
     this.prepareSpawnQueue();
     this.createWeather();
@@ -144,6 +153,7 @@ export class World {
     const startColumn = this.isRespawningAtCheckpoint ? this.level.checkpointColumn : 2;
     this.player = new Player(startColumn * TILE_SIZE + 2, 0);
     this.player.setPowerLevel(this.session.carriedPowerLevel);
+    this.player.isChef = this.session.chefMode;
     const groundRow = this.tileMap.findFirstSolidRow(startColumn);
     this.player.y = groundRow * TILE_SIZE - this.player.height;
     this.playerStartX = this.player.x;
@@ -256,6 +266,9 @@ export class World {
   rewardStomp(enemy, player, exclamation) {
     player.stompCombo++;
     this.spawnImpact(enemy.centerX, enemy.y + enemy.height * 0.5);
+    if (enemy.isDancing) {
+      for (let coin = 0; coin < 4; coin++) this.addEntity(new FallingCoin(enemy.centerX + (coin - 1.5) * 7, enemy.y - 14 - coin * 4));
+    }
     screenFx.hitStop(2 + Math.min(3, player.stompCombo));
     screenFx.shake(0.7 + player.stompCombo * 0.15, 8);
     this.awardPoints(this.getComboPoints(player.stompCombo), enemy.centerX, enemy.y - 4);
@@ -306,6 +319,42 @@ export class World {
 
   spawnBrickDebris(x, y, velocityX, velocityY) {
     this.addVisualEffect(new VisualEffect(EFFECT_KIND.BRICK_DEBRIS, x, y, { velocityX, velocityY, color: this.theme.brickColors.base }));
+  }
+
+  /** Destello brillante (monedas, flores, semillas). */
+  spawnSparkle(x, y) {
+    this.addVisualEffect(new VisualEffect(EFFECT_KIND.STAR, x, y, {
+      velocityX: randomBetween(-0.4, 0.4), velocityY: randomBetween(-0.8, -0.2), color: '#ffffff', lifetime: 26, size: 2.6
+    }));
+  }
+
+  /** Paco toca una Flor Maravilla. */
+  triggerWonder(flower) {
+    this.wonder.trigger(flower);
+  }
+
+  /** Paco coge la Semilla Maravilla del nivel. */
+  collectSeed(seed) {
+    this.session.collectSeed(this.levelIndex);
+    soundEngine.playSoundEffect(SOUND_EFFECT.SEED);
+    this.showBanner(GAMEPLAY_MESSAGES.seedCollected, 140);
+    this.showFloatingText('+2000', seed.centerX, seed.y - 6, '#ffe45a', 70);
+    this.spawnImpact(seed.centerX, seed.centerY, '#ffe45a');
+    screenFx.flash('#fff2a0', 0.5);
+    screenFx.punch(0.06);
+  }
+
+  /** Paco coge una moneda gigante escondida. */
+  collectBigCoin(coin) {
+    this.session.collectBigCoin(this.levelIndex, coin.coinNumber);
+    soundEngine.playSoundEffect(SOUND_EFFECT.BIG_COIN);
+    this.showFloatingText('+500', coin.centerX, coin.y - 6, '#ff9aff', 60);
+    this.spawnImpact(coin.centerX, coin.centerY, '#ff9aff');
+  }
+
+  /** Paco usa una puerta o alcantarilla (entra o sale de una sala secreta). */
+  useDoor(door) {
+    this.areas.useDoor(door);
   }
 
   /** Hace temblar la pantalla unos pasos (explosiones, golpes al jefe). */
@@ -488,6 +537,10 @@ export class World {
     }
     if (this.shakeStepsLeft > 0) this.shakeStepsLeft--;
 
+    if (this.areas.update()) {
+      for (const effect of this.visualEffects) effect.update();
+      return;
+    }
     this.updateLevelTimer();
     if (this.phase !== WORLD_PHASE.PLAYING) return;
     this.activateSpawnPointsEnteringView();
@@ -496,6 +549,7 @@ export class World {
     if (this.goalSequence) this.goalSequence.update();
     else this.player.update(this);
     if (this.phase !== WORLD_PHASE.PLAYING) return;
+    this.wonder.update();
 
     for (const entity of this.entities) if (!entity.shouldBeRemoved) entity.update(this);
     this.turnAroundEnemiesThatCollide();
@@ -549,7 +603,9 @@ export class World {
       // Nada de enemigos pegados a Paco justo al empezar o reaparecer.
       const isTooCloseToStart = isLevelStart && isEnemySpawn(spawnPoint) && Math.abs(spawnPoint.column * TILE_SIZE - this.playerStartX) < SAFE_START_DISTANCE;
       if (isTooCloseToStart) continue;
-      this.addEntity(createEntityForSpawnPoint(spawnPoint, this.level, this.theme));
+      const entity = createEntityForSpawnPoint(spawnPoint, this.level, this.theme);
+      this.addEntity(entity);
+      if (entity) this.wonder.applyToEntity(entity);
     }
   }
 
@@ -730,7 +786,8 @@ export class World {
       tileImages,
       theme: this.theme,
       blockBumpOffsets: this.blockBumpOffsets,
-      stepCounter: this.stepCounter
+      stepCounter: this.stepCounter,
+      isBeatWarning: this.wonder.isBeatWarning
     }, cameraX);
     for (const platform of this.platforms) platform.draw(context, cameraX);
     drawShadows(context, { tileMap: this.tileMap, entities: this.entities, player: this.player }, cameraX);
@@ -745,10 +802,14 @@ export class World {
       levelNumber: this.levelIndex + 1,
       levelName: this.levelDefinition.name,
       timeRemaining: this.timeRemaining,
-      stepCounter: this.stepCounter
+      stepCounter: this.stepCounter,
+      hasSeed: this.session.seeds.has(this.levelIndex),
+      bigCoins: this.session.countBigCoinsInLevel(this.levelIndex),
+      bigCoinTotal: this.levelBigCoinTotal
     });
     this.drawMessages(context);
     if (this.isPaused) this.drawPauseOverlay(context);
+    drawIrisOpening(context, this.areas.irisOpenness);
   }
 
   /**
@@ -761,11 +822,20 @@ export class World {
     screenFx.grade = theme.grade || { color: '#000000', alpha: 0, mode: 'soft-light' };
     screenFx.vignette = theme.vignette === undefined ? 0.5 : theme.vignette;
     screenFx.bloom = theme.bloom === undefined ? 0.28 : theme.bloom;
-    if (!theme.lighting) return;
+    // Las maravillas tiñen el nivel de colores que van cambiando.
+    if (screenFx.wonder > 0.02) {
+      screenFx.grade = { color: `hsl(${(this.stepCounter * 3) % 360}, 95%, 60%)`, alpha: 0.3 * screenFx.wonder, mode: 'soft-light' };
+      screenFx.bloom = Math.max(screenFx.bloom, 0.5 * screenFx.wonder);
+    }
+    const lighting = this.wonder.lighting || theme.lighting;
+    if (!lighting) return;
     const lights = [];
     if (theme.name === 'hacienda') lights.push(...drawTorches(context, cameraX, this.stepCounter));
-    if (!this.player.isDead) lights.push({ x: this.player.centerX - cameraX, y: this.player.centerY, radius: theme.lighting.playerLightRadius });
-    drawLighting(context, theme.lighting, lights);
+    if (!this.player.isDead) lights.push({ x: this.player.centerX - cameraX, y: this.player.centerY, radius: lighting.playerLightRadius });
+    for (const entity of this.entities) {
+      if (entity.isWonderLight && this.isVisible(entity)) lights.push({ x: entity.centerX - cameraX, y: entity.centerY, radius: 34 });
+    }
+    drawLighting(context, lighting, lights);
   }
 
   /**

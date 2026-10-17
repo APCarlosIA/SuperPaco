@@ -4,6 +4,9 @@
 import { LEVEL_TIMER, SCREEN_WIDTH } from '../config/constants.js';
 import { SPRITES, drawSpriteFitted } from '../graphics/sprites.js';
 import { drawText } from '../graphics/font.js';
+import { OUTLINE_COLOR } from '../graphics/hd.js';
+import { outlinedCircle } from '../graphics/shapes.js';
+import { sparkle } from '../graphics/creatureKit.js';
 
 const LABEL_ROW_Y = 5;
 const VALUE_ROW_Y = 15;
@@ -18,8 +21,11 @@ const STYLE = { outlineColor: '#140c20' };
  * @param {string} status.levelName
  * @param {number} status.timeRemaining
  * @param {number} status.stepCounter Para hacer parpadear el tiempo cuando se acaba.
+ * @param {boolean} status.hasSeed Si ya tiene la Semilla Maravilla de este nivel.
+ * @param {number} status.bigCoins Monedas gigantes conseguidas en este nivel.
+ * @param {number} status.bigCoinTotal Monedas gigantes que tiene el nivel.
  */
-export function drawHud(context, { session, levelNumber, levelName, timeRemaining, stepCounter }) {
+export function drawHud(context, { session, levelNumber, levelName, timeRemaining, stepCounter, hasSeed, bigCoins, bigCoinTotal }) {
   // Franja oscura translúcida para que se lea sobre cualquier fondo.
   const bar = context.createLinearGradient(0, 0, 0, 30);
   bar.addColorStop(0, 'rgba(10, 6, 28, 0.6)');
@@ -41,4 +47,21 @@ export function drawHud(context, { session, levelNumber, levelName, timeRemainin
   const blinkRed = isRunningOut && Math.floor(stepCounter / 16) % 2 === 1;
   drawText(context, 'TIEMPO', 308, LABEL_ROW_Y, '#ffd84a', { ...STYLE, align: 'right' });
   drawText(context, String(timeRemaining), 308, VALUE_ROW_Y, blinkRed ? '#ff5a5a' : '#ffffff', { ...STYLE, align: 'right' });
+
+  drawCollectibleCounters(context, { hasSeed, bigCoins, bigCoinTotal });
+}
+
+/** Contadores de la Semilla Maravilla y de las monedas gigantes del nivel. */
+function drawCollectibleCounters(context, { hasSeed, bigCoins, bigCoinTotal }) {
+  // Semilla Maravilla.
+  outlinedCircle(context, 17, 28.5, 3.6, hasSeed ? '#fff6a8' : '#8a8498', hasSeed ? '#e8a810' : '#4a4658', 0.7);
+  if (hasSeed) sparkle(context, 17, 28.5, 2.6, '#ffffff');
+  else { context.strokeStyle = OUTLINE_COLOR; context.lineWidth = 0.5; context.setLineDash([1, 1]); context.beginPath(); context.arc(17, 28.5, 2, 0, Math.PI * 2); context.stroke(); context.setLineDash([]); }
+  drawText(context, hasSeed ? '1/1' : '0/1', 23, 26, hasSeed ? '#ffe45a' : '#c8c4d8', STYLE);
+  // Monedas gigantes.
+  for (let coin = 0; coin < bigCoinTotal; coin++) {
+    const owned = coin < bigCoins;
+    outlinedCircle(context, 52 + coin * 9, 28.5, 3.3, owned ? '#ffc0f4' : '#8a8498', owned ? '#b02aa8' : '#4a4658', 0.7);
+    if (owned) sparkle(context, 52 + coin * 9, 28.5, 2.2, '#ffffff');
+  }
 }

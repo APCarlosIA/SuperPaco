@@ -84,7 +84,17 @@ export function createPostProcessor(displayCanvas, sceneCanvas) {
       display.scale(zoom, zoom);
       display.translate(-WIDTH / 2, -HEIGHT / 2);
     }
-    display.drawImage(sceneCanvas, 0, 0);
+    if (screenFx.wonder > 0.02 && screenFx.quality < 2) {
+      // Imagen ondulante: la pantalla se dibuja en franjas desplazadas.
+      const amplitude = 3.2 * screenFx.wonder * RENDER_SCALE;
+      const strip = 10;
+      for (let y = 0; y < HEIGHT; y += strip) {
+        const offset = Math.sin(screenFx.time / 9 + y * 0.018) * amplitude;
+        display.drawImage(sceneCanvas, 0, y, WIDTH, strip, offset, y, WIDTH, strip);
+      }
+    } else {
+      display.drawImage(sceneCanvas, 0, 0);
+    }
     display.restore();
 
     if (screenFx.quality === 0 && screenFx.bloom > 0) applyBloom(screenFx.bloom * 0.55);

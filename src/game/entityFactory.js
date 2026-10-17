@@ -16,6 +16,10 @@ import { LavaBubble } from '../entities/enemies/LavaBubble.js';
 import { TaxInspectorBoss } from '../entities/enemies/TaxInspectorBoss.js';
 import { RotatingHazard } from '../entities/hazards/RotatingHazard.js';
 import { MovingPlatform } from '../entities/MovingPlatform.js';
+import { WonderFlower } from '../entities/wonder/WonderFlower.js';
+import { BigCoin } from '../entities/wonder/BigCoin.js';
+import { Talker } from '../entities/wonder/Talker.js';
+import { Doorway } from '../entities/wonder/Doorway.js';
 
 /**
  * Crea un enemigo a partir de su identificador del catálogo.
@@ -58,6 +62,10 @@ export function createEntityForSpawnPoint(spawnPoint, level, theme) {
     case 'fireBar': return RotatingHazard.createFireBar(column, row, settings);
     case 'windmillBlades': return RotatingHazard.createWindmillBlades(column, row);
     case 'lavaBubble': return new LavaBubble(column);
+    case 'wonderFlower': return new WonderFlower(column, row, settings);
+    case 'bigCoin': return new BigCoin(column, row, settings);
+    case 'talker': return new Talker(column, row, settings);
+    case 'door': return new Doorway(column, row, settings);
     default:
       console.warn(`Tipo de aparición desconocido: "${kind}"`);
       return null;

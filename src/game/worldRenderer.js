@@ -13,7 +13,7 @@ import { SPRITES, drawSprite } from '../graphics/sprites.js';
 import { drawText, measureTextWidth } from '../graphics/font.js';
 import { BACKGROUND_LAYER_WIDTH, PARALLAX_FACTORS } from '../graphics/backgroundConstants.js';
 import { getGroundDecorationImage, drawGroundDecoration, getBarImage, BAR_SIZE, DECORATION_PADDING } from '../graphics/decorationImages.js';
-import { TILE, isSolidTile } from '../world/tileTypes.js';
+import { TILE, isSolidTile, isBeatTile } from '../world/tileTypes.js';
 import { GOAL_POLE_TOP_ROW } from '../world/LevelBuilder.js';
 import { HAM_START_Y } from './GoalSequence.js';
 
@@ -93,7 +93,7 @@ function chooseGroundImage(tileMap, column, row, theme, tileImages) {
  * @param {number} scene.stepCounter Para las animaciones.
  * @param {number} cameraX
  */
-export function drawTileLayer(context, { tileMap, tileImages, theme, blockBumpOffsets, stepCounter }, cameraX) {
+export function drawTileLayer(context, { tileMap, tileImages, theme, blockBumpOffsets, stepCounter, isBeatWarning = false }, cameraX) {
   const firstColumn = Math.max(0, Math.floor(cameraX / TILE_SIZE));
   const lastColumn = Math.min(tileMap.widthInTiles - 1, firstColumn + VISIBLE_COLUMNS);
   const animationStep = Math.floor(stepCounter / STEPS_PER_TILE_FRAME);
@@ -106,6 +106,10 @@ export function drawTileLayer(context, { tileMap, tileImages, theme, blockBumpOf
       const screenX = Math.round(column * TILE_SIZE - cameraX);
       const screenY = row * TILE_SIZE - (blockBumpOffsets.get(`${column},${row}`) || 0);
 
+      if (isBeatTile(tile)) {
+        drawBeatTile(context, tile, screenX, screenY, stepCounter, isBeatWarning);
+        continue;
+      }
       if (tile === TILE.LAVA || tile === TILE.WATER) {
         drawLiquidTile(context, tileMap, column, row, tile, screenX, screenY, stepCounter);
         continue;
@@ -148,6 +152,53 @@ function drawBlockGlow(context, screenX, screenY, stepCounter, column) {
   gradient.addColorStop(1, 'rgba(255, 150, 40, 0)');
   context.fillStyle = gradient;
   context.fillRect(screenX - 14, screenY - 14, 44, 44);
+  context.restore();
+}
+
+/** Plataformas "al ritmo": sólidas con una nota musical o fantasmas punteadas. */
+function drawBeatTile(context, tile, screenX, screenY, stepCounter, isWarning) {
+  const isGroupA = tile === TILE.BEAT_A_ON || tile === TILE.BEAT_A_OFF;
+  const isSolid = tile === TILE.BEAT_A_ON || tile === TILE.BEAT_B_ON;
+  const [light, dark, glowRgb] = isGroupA ? ['#9af2ff', '#1a7ad8', '90, 210, 255'] : ['#ffb0f4', '#b02aa8', '255, 120, 235'];
+  const flicker = isWarning && Math.floor(stepCounter / 3) % 2 === 0;
+  if (isSolid) {
+    context.save();
+    context.globalAlpha = flicker ? 0.45 : 1;
+    roundedPath(context, screenX + 0.5, screenY + 0.5, TILE_SIZE - 1, TILE_SIZE - 1, 3);
+    fillWithOutline(context, light, dark, screenY, screenY + TILE_SIZE, 1);
+    context.fillStyle = 'rgba(255,255,255,0.4)';
+    context.fillRect(screenX + 2.4, screenY + 1.8, TILE_SIZE - 4.8, 1);
+    // Nota musical.
+    context.fillStyle = '#ffffff';
+    context.beginPath(); context.ellipse(screenX + 6.4, screenY + 11, 2.4, 1.8, -0.4, 0, Math.PI * 2); context.fill();
+    context.strokeStyle = '#ffffff'; context.lineWidth = 0.9;
+    context.beginPath(); context.moveTo(screenX + 8.4, screenY + 10.4); context.lineTo(screenX + 8.4, screenY + 4); context.lineTo(screenX + 11.4, screenY + 5.6); context.stroke();
+    context.restore();
+    addGlowTile(context, screenX + 8, screenY + 8, glowRgb, 0.22 + 0.1 * Math.sin(stepCounter / 10));
+  } else {
+    context.save();
+    context.globalAlpha = isWarning && !flicker ? 0.85 : 0.35;
+    roundedPath(context, screenX + 0.8, screenY + 0.8, TILE_SIZE - 1.6, TILE_SIZE - 1.6, 3);
+    context.setLineDash([2, 2]);
+    context.strokeStyle = light;
+    context.lineWidth = 1;
+    context.stroke();
+    context.setLineDash([]);
+    context.fillStyle = `rgba(${glowRgb}, 0.1)`;
+    context.fill();
+    context.restore();
+  }
+}
+
+/** Resplandor aditivo sobre una baldosa. */
+function addGlowTile(context, x, y, rgb, intensity) {
+  context.save();
+  context.globalCompositeOperation = 'lighter';
+  const gradient = context.createRadialGradient(x, y, 1, x, y, 18);
+  gradient.addColorStop(0, `rgba(${rgb}, ${intensity})`);
+  gradient.addColorStop(1, `rgba(${rgb}, 0)`);
+  context.fillStyle = gradient;
+  context.fillRect(x - 18, y - 18, 36, 36);
   context.restore();
 }
 

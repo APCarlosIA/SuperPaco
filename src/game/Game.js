@@ -14,7 +14,7 @@
  */
 import { BUTTON } from '../core/input.js';
 import { toggleFullscreen } from '../core/screen.js';
-import { recordAchievement } from '../core/storage.js';
+import { recordAchievement, loadProgress } from '../core/storage.js';
 import { soundEngine } from '../audio/soundEngine.js';
 import { screenFx } from '../graphics/screenFx.js';
 import { drawIrisOpening } from '../graphics/uiKit.js';
@@ -39,6 +39,7 @@ export class Game {
   constructor({ controls }) {
     this.controls = controls;
     this.session = new GameSession();
+    this.session.chefMode = loadProgress().chefMode;
     /** Pantalla activa: cualquier objeto con `update()` y `draw(context)`. */
     this.activeScreen = null;
     /** Pantalla del paso anterior, para reiniciar los efectos al cambiar de pantalla. */
@@ -122,7 +123,7 @@ export class Game {
       this.showLevelIntro();
       return;
     }
-    recordAchievement({ score: this.session.score });
+    recordAchievement({ score: this.session.score, seeds: this.session.seeds, bigCoins: this.session.bigCoins });
     this.activeScreen = new GameOverScreen(this, this.session.score);
   }
 
@@ -136,7 +137,9 @@ export class Game {
     const isGameFinished = this.session.levelIndex >= LEVELS.length;
     recordAchievement({
       unlockedLevel: Math.min(this.session.levelIndex, LEVELS.length - 1),
-      score: this.session.score
+      score: this.session.score,
+      seeds: this.session.seeds,
+      bigCoins: this.session.bigCoins
     });
     if (isGameFinished) this.activeScreen = new EndingScreen(this, this.session.score);
     else this.showLevelIntro();

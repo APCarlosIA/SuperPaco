@@ -21,6 +21,7 @@ export const PACO_PADDING = 5;
 /** Colores de cada variante del chándal. */
 export const PACO_PALETTES = Object.freeze({
   normal: { jacket: '#e2301c', jacketLight: '#ff6244', jacketDark: '#9c1a10', stripe: '#ffd51c', pants: '#2a3a96', pantsDark: '#19225e', beret: '#201a2a' },
+  chef: { jacket: '#e2301c', jacketLight: '#ff6244', jacketDark: '#9c1a10', stripe: '#ffd51c', pants: '#2a3a96', pantsDark: '#19225e', beret: '#fdfdff', chef: true },
   spicy: { jacket: '#0eae4a', jacketLight: '#4ee27c', jacketDark: '#07692c', stripe: '#e8341c', pants: '#1f6a34', pantsDark: '#124020', beret: '#201a2a' },
   sugarRushGold: { jacket: '#ffd51c', jacketLight: '#fff07a', jacketDark: '#c88a08', stripe: '#fc7c00', pants: '#d05a08', pantsDark: '#8a3a04', beret: '#a83a08' },
   sugarRushWhite: { jacket: '#fcfcfc', jacketLight: '#ffffff', jacketDark: '#b4bcd0', stripe: '#3cbcfc', pants: '#2a58f0', pantsDark: '#1a3a9a', beret: '#a81c10' }
@@ -190,15 +191,34 @@ function drawHead(context, body, palette, centerX, centerY, mood, tilt) {
     context.fillStyle = '#8a3a2a';
     roundedRectPath(context, width * 0.1, 3.5, width * 0.3, 0.6, 0.3); context.fill();
   }
-  // Boina ladeada con rabito.
-  context.fillStyle = palette.beret;
-  context.beginPath();
-  context.ellipse(-width * 0.08, -height * 0.38, width * 0.58, height * 0.2, -0.2, 0, Math.PI * 2);
-  context.fill();
-  context.fillStyle = 'rgba(255,255,255,0.22)';
-  context.beginPath(); context.ellipse(-width * 0.2, -height * 0.45, width * 0.28, height * 0.06, -0.22, 0, Math.PI * 2); context.fill();
-  context.fillStyle = palette.beret;
-  roundedRectPath(context, -width * 0.1, -height * 0.64, 1.3, 1.1, 0.5); context.fill();
+  if (palette.chef) {
+    // Gorro de cocinero: cilindro hinchado con pliegues.
+    const hat = context.createLinearGradient(-width * 0.4, 0, width * 0.4, 0);
+    hat.addColorStop(0, '#ffffff'); hat.addColorStop(0.6, '#f2f2fa'); hat.addColorStop(1, '#b8bcd0');
+    context.fillStyle = hat;
+    context.beginPath();
+    context.ellipse(-width * 0.2, -height * 0.78, width * 0.3, height * 0.26, 0, 0, Math.PI * 2);
+    context.ellipse(width * 0.12, -height * 0.84, width * 0.28, height * 0.28, 0, 0, Math.PI * 2);
+    context.ellipse(-width * 0.04, -height * 0.98, width * 0.3, height * 0.24, 0, 0, Math.PI * 2);
+    context.fill();
+    roundedRectPath(context, -width * 0.42, -height * 0.78, width * 0.84, height * 0.46, 1.6);
+    context.fill();
+    context.fillStyle = '#d8dcec';
+    roundedRectPath(context, -width * 0.44, -height * 0.4, width * 0.88, 1.5, 0.7);
+    context.fill();
+    context.strokeStyle = 'rgba(120,130,170,0.5)'; context.lineWidth = 0.4;
+    for (const x of [-0.2, 0.05, 0.28]) { context.beginPath(); context.moveTo(width * x, -height * 0.62); context.lineTo(width * x, -height * 0.4); context.stroke(); }
+  } else {
+    // Boina ladeada con rabito.
+    context.fillStyle = palette.beret;
+    context.beginPath();
+    context.ellipse(-width * 0.08, -height * 0.38, width * 0.58, height * 0.2, -0.2, 0, Math.PI * 2);
+    context.fill();
+    context.fillStyle = 'rgba(255,255,255,0.22)';
+    context.beginPath(); context.ellipse(-width * 0.2, -height * 0.45, width * 0.28, height * 0.06, -0.22, 0, Math.PI * 2); context.fill();
+    context.fillStyle = palette.beret;
+    roundedRectPath(context, -width * 0.1, -height * 0.64, 1.3, 1.1, 0.5); context.fill();
+  }
   context.restore();
 }
 

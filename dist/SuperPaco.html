@@ -349,6 +349,11 @@ const screenFx = {
    * 2 = solo viñeta. Baja sola en ordenadores lentos (ver main.js).
    */
   quality: 0,
+  /** Intensidad actual de la distorsión de las maravillas (0 a 1) y a la que tiende. */
+  wonder: 0,
+  wonderTarget: 0,
+  /** Reloj de las ondas de la maravilla. */
+  time: 0,
 
   /**
    * Hace temblar la pantalla.
@@ -388,6 +393,9 @@ const screenFx = {
 
   /** Avanza los efectos un paso (siempre, aunque la simulación esté congelada). */
   update() {
+    this.time++;
+    this.wonder += (this.wonderTarget - this.wonder) * 0.06;
+    if (this.wonder < 0.005) this.wonder = 0;
     if (this.shakeStepsLeft > 0) this.shakeStepsLeft--;
     this.flashAlpha = Math.max(0, this.flashAlpha - 0.045);
     this.zoomPunch = Math.max(0, this.zoomPunch - 0.006);
@@ -407,6 +415,8 @@ const screenFx = {
     this.flashAlpha = 0;
     this.zoomPunch = 0;
     this.hitStopStepsLeft = 0;
+    this.wonder = 0;
+    this.wonderTarget = 0;
     this.grade = NO_GRADE;
     this.vignette = 0.5;
     this.bloom = 0.28;
@@ -503,7 +513,17 @@ function createPostProcessor(displayCanvas, sceneCanvas) {
       display.scale(zoom, zoom);
       display.translate(-WIDTH / 2, -HEIGHT / 2);
     }
-    display.drawImage(sceneCanvas, 0, 0);
+    if (screenFx.wonder > 0.02 && screenFx.quality < 2) {
+      // Imagen ondulante: la pantalla se dibuja en franjas desplazadas.
+      const amplitude = 3.2 * screenFx.wonder * RENDER_SCALE;
+      const strip = 10;
+      for (let y = 0; y < HEIGHT; y += strip) {
+        const offset = Math.sin(screenFx.time / 9 + y * 0.018) * amplitude;
+        display.drawImage(sceneCanvas, 0, y, WIDTH, strip, offset, y, WIDTH, strip);
+      }
+    } else {
+      display.drawImage(sceneCanvas, 0, 0);
+    }
     display.restore();
 
     if (screenFx.quality === 0 && screenFx.bloom > 0) applyBloom(screenFx.bloom * 0.55);
@@ -1201,6 +1221,40 @@ const SONGS = Object.freeze({
     ]
   },
 
+  /** Flor Maravilla: tonada saltarina y psicodélica. */
+  maravilla: {
+    tempoBpm: 168,
+    loops: true,
+    tracks: [
+      { instrument: INSTRUMENT.PULSE_25, volume: 0.16, notes: `
+        E5:2 G5:2 C6:2 G5:2 E5:2 G5:2 A5:2 G5:2   D5:2 F5:2 A5:2 F5:2 D5:2 F5:2 G5:2 F5:2
+        C5:2 E5:2 G5:2 E5:2 C6:4 B5:2 G5:2        A5:2 G5:2 E5:2 D5:2 C5:8` },
+      { instrument: INSTRUMENT.PULSE_12, volume: 0.07, notes: `
+        r:2 E4:2 r:2 G4:2 r:2 E4:2 r:2 G4:2       r:2 F4:2 r:2 A4:2 r:2 F4:2 r:2 A4:2
+        r:2 E4:2 r:2 G4:2 r:2 E4:2 r:2 G4:2       r:2 F4:2 r:2 G4:2 r:2 E4:2 r:2 C4:2` },
+      { instrument: INSTRUMENT.TRIANGLE, volume: 0.3, notes: `
+        C3:4 G3:4 C3:4 G3:4  F3:4 C4:4 F3:4 C4:4  C3:4 G3:4 C3:4 G3:4  F3:4 G3:4 C3:8` },
+      { instrument: INSTRUMENT.NOISE, volume: 0.1, notes: repeatNotes('k:2 h:2 s:2 h:2', 8) }
+    ]
+  },
+
+  /** Maravilla en tono menor: apagón y estampida. */
+  maravillaSombra: {
+    tempoBpm: 184,
+    loops: true,
+    tracks: [
+      { instrument: INSTRUMENT.PULSE_25, volume: 0.16, notes: `
+        A4:2 C5:2 E5:2 C5:2 A4:2 C5:2 B4:2 A4:2   G4:2 B4:2 D5:2 B4:2 G4:2 B4:2 A4:2 G4:2
+        F4:2 A4:2 C5:2 A4:2 E5:4 D5:2 C5:2        B4:2 A4:2 G#4:2 B4:2 A4:8` },
+      { instrument: INSTRUMENT.PULSE_12, volume: 0.07, notes: `
+        r:2 E4:2 r:2 A4:2 r:2 E4:2 r:2 A4:2       r:2 D4:2 r:2 G4:2 r:2 D4:2 r:2 G4:2
+        r:2 C4:2 r:2 F4:2 r:2 C4:2 r:2 F4:2       r:2 E4:2 r:2 G#4:2 r:2 E4:2 r:2 A4:2` },
+      { instrument: INSTRUMENT.TRIANGLE, volume: 0.3, notes: `
+        A2:4 E3:4 A2:4 E3:4  G2:4 D3:4 G2:4 D3:4  F2:4 C3:4 F2:4 C3:4  E2:4 E3:4 A2:8` },
+      { instrument: INSTRUMENT.NOISE, volume: 0.12, notes: repeatNotes('k:2 h:2 s:2 k:2', 8) }
+    ]
+  },
+
   /** Victoria contra el jefe y final bueno. */
   fanfare: {
     tempoBpm: 140,
@@ -1265,7 +1319,15 @@ const SOUND_EFFECT = Object.freeze({
   PAUSE: 'pause',
   TIME_TICK: 'timeTick',
   LAVA_HISS: 'lavaHiss',
-  CHECKPOINT: 'checkpoint'
+  CHECKPOINT: 'checkpoint',
+  WONDER_START: 'wonderStart',
+  WONDER_END: 'wonderEnd',
+  SEED: 'seed',
+  BIG_COIN: 'bigCoin',
+  DOOR: 'door',
+  TALK: 'talk',
+  BEAT: 'beat',
+  SECRET: 'secret'
 });
 
 /**
@@ -1317,7 +1379,18 @@ const SOUND_EFFECT_RECIPES = {
   [SOUND_EFFECT.PAUSE]: engine => engine.playMelodyNow(['E6', 'C6', 'E6', 'C6'], 0.07, INSTRUMENT.PULSE_25, 0.12),
   [SOUND_EFFECT.TIME_TICK]: (engine, now) => engine.playTone({ frequency: noteNameToFrequency('A6'), startTime: now, duration: 0.025, instrument: INSTRUMENT.PULSE_12, volume: 0.07 }),
   [SOUND_EFFECT.LAVA_HISS]: (engine, now) => engine.playNoise('hiHat', now, 0.08),
-  [SOUND_EFFECT.CHECKPOINT]: engine => engine.playMelodyNow(['G5', 'B5', 'D6', 'G6'], 0.06, INSTRUMENT.PULSE_25, 0.14)
+  [SOUND_EFFECT.CHECKPOINT]: engine => engine.playMelodyNow(['G5', 'B5', 'D6', 'G6'], 0.06, INSTRUMENT.PULSE_25, 0.14),
+  [SOUND_EFFECT.WONDER_START]: engine => engine.playMelodyNow(['C5', 'E5', 'G5', 'B5', 'D6', 'F#6', 'A6', 'C#7', 'E7', 'G7'], 0.045, INSTRUMENT.PULSE_12, 0.14),
+  [SOUND_EFFECT.WONDER_END]: engine => engine.playMelodyNow(['G6', 'E6', 'C6', 'G5', 'E5', 'C5'], 0.06, INSTRUMENT.PULSE_25, 0.13),
+  [SOUND_EFFECT.SEED]: engine => engine.playMelodyNow(['C6', 'E6', 'G6', 'C7', 'E7', 'G7', 'C7', 'E7', 'G7', 'C8'], 0.06, INSTRUMENT.PULSE_25, 0.15),
+  [SOUND_EFFECT.BIG_COIN]: engine => engine.playMelodyNow(['E6', 'B6', 'E7', 'G#7', 'B7'], 0.055, INSTRUMENT.PULSE_12, 0.15),
+  [SOUND_EFFECT.DOOR]: (engine, now) => {
+    engine.playTone({ frequency: 220, slideToFrequency: 110, startTime: now, duration: 0.14, instrument: INSTRUMENT.TRIANGLE, volume: 0.3 });
+    engine.playNoise('swish', now + 0.05, 0.2, 0.1);
+  },
+  [SOUND_EFFECT.TALK]: (engine, now) => engine.playTone({ frequency: 560 + Math.random() * 260, startTime: now, duration: 0.03, instrument: INSTRUMENT.PULSE_12, volume: 0.06 }),
+  [SOUND_EFFECT.BEAT]: (engine, now) => engine.playTone({ frequency: 150, slideToFrequency: 90, startTime: now, duration: 0.07, instrument: INSTRUMENT.TRIANGLE, volume: 0.22 }),
+  [SOUND_EFFECT.SECRET]: engine => engine.playMelodyNow(['A5', 'C#6', 'E6', 'A6', 'E6', 'C#6', 'A5', 'E6', 'A6'], 0.05, INSTRUMENT.PULSE_25, 0.13)
 };
 
 /**
@@ -2275,11 +2348,13 @@ const PACO_BIG_POSES = Object.freeze({
 /**
  * Variantes de color de Paco:
  *   - normal: chándal rojo y amarillo.
+ *   - chef: el truco del cocinero (colores normales con gorro de chef).
  *   - spicy: tras comer un pimiento de Padrón (chándal verde, puede lanzar fuego).
  *   - sugarRushGold / sugarRushWhite: parpadeo del subidón de churros (invencible).
  */
 const PACO_COLOR_VARIANTS = Object.freeze({
   normal: {},
+  chef: {},
   spicy: { R: '#00a844', Y: '#d82800', u: '#1c5020' },
   sugarRushGold: { R: '#fcd800', Y: '#fc7c00', u: '#c85000' },
   sugarRushWhite: { R: '#fcfcfc', Y: '#3cbcfc', u: '#2050e8', K: '#881400' }
@@ -2636,6 +2711,7 @@ const PACO_PADDING = 5;
 /** Colores de cada variante del chándal. */
 const PACO_PALETTES = Object.freeze({
   normal: { jacket: '#e2301c', jacketLight: '#ff6244', jacketDark: '#9c1a10', stripe: '#ffd51c', pants: '#2a3a96', pantsDark: '#19225e', beret: '#201a2a' },
+  chef: { jacket: '#e2301c', jacketLight: '#ff6244', jacketDark: '#9c1a10', stripe: '#ffd51c', pants: '#2a3a96', pantsDark: '#19225e', beret: '#fdfdff', chef: true },
   spicy: { jacket: '#0eae4a', jacketLight: '#4ee27c', jacketDark: '#07692c', stripe: '#e8341c', pants: '#1f6a34', pantsDark: '#124020', beret: '#201a2a' },
   sugarRushGold: { jacket: '#ffd51c', jacketLight: '#fff07a', jacketDark: '#c88a08', stripe: '#fc7c00', pants: '#d05a08', pantsDark: '#8a3a04', beret: '#a83a08' },
   sugarRushWhite: { jacket: '#fcfcfc', jacketLight: '#ffffff', jacketDark: '#b4bcd0', stripe: '#3cbcfc', pants: '#2a58f0', pantsDark: '#1a3a9a', beret: '#a81c10' }
@@ -2805,15 +2881,34 @@ function drawHead(context, body, palette, centerX, centerY, mood, tilt) {
     context.fillStyle = '#8a3a2a';
     roundedRectPath(context, width * 0.1, 3.5, width * 0.3, 0.6, 0.3); context.fill();
   }
-  // Boina ladeada con rabito.
-  context.fillStyle = palette.beret;
-  context.beginPath();
-  context.ellipse(-width * 0.08, -height * 0.38, width * 0.58, height * 0.2, -0.2, 0, Math.PI * 2);
-  context.fill();
-  context.fillStyle = 'rgba(255,255,255,0.22)';
-  context.beginPath(); context.ellipse(-width * 0.2, -height * 0.45, width * 0.28, height * 0.06, -0.22, 0, Math.PI * 2); context.fill();
-  context.fillStyle = palette.beret;
-  roundedRectPath(context, -width * 0.1, -height * 0.64, 1.3, 1.1, 0.5); context.fill();
+  if (palette.chef) {
+    // Gorro de cocinero: cilindro hinchado con pliegues.
+    const hat = context.createLinearGradient(-width * 0.4, 0, width * 0.4, 0);
+    hat.addColorStop(0, '#ffffff'); hat.addColorStop(0.6, '#f2f2fa'); hat.addColorStop(1, '#b8bcd0');
+    context.fillStyle = hat;
+    context.beginPath();
+    context.ellipse(-width * 0.2, -height * 0.78, width * 0.3, height * 0.26, 0, 0, Math.PI * 2);
+    context.ellipse(width * 0.12, -height * 0.84, width * 0.28, height * 0.28, 0, 0, Math.PI * 2);
+    context.ellipse(-width * 0.04, -height * 0.98, width * 0.3, height * 0.24, 0, 0, Math.PI * 2);
+    context.fill();
+    roundedRectPath(context, -width * 0.42, -height * 0.78, width * 0.84, height * 0.46, 1.6);
+    context.fill();
+    context.fillStyle = '#d8dcec';
+    roundedRectPath(context, -width * 0.44, -height * 0.4, width * 0.88, 1.5, 0.7);
+    context.fill();
+    context.strokeStyle = 'rgba(120,130,170,0.5)'; context.lineWidth = 0.4;
+    for (const x of [-0.2, 0.05, 0.28]) { context.beginPath(); context.moveTo(width * x, -height * 0.62); context.lineTo(width * x, -height * 0.4); context.stroke(); }
+  } else {
+    // Boina ladeada con rabito.
+    context.fillStyle = palette.beret;
+    context.beginPath();
+    context.ellipse(-width * 0.08, -height * 0.38, width * 0.58, height * 0.2, -0.2, 0, Math.PI * 2);
+    context.fill();
+    context.fillStyle = 'rgba(255,255,255,0.22)';
+    context.beginPath(); context.ellipse(-width * 0.2, -height * 0.45, width * 0.28, height * 0.06, -0.22, 0, Math.PI * 2); context.fill();
+    context.fillStyle = palette.beret;
+    roundedRectPath(context, -width * 0.1, -height * 0.64, 1.3, 1.1, 0.5); context.fill();
+  }
   context.restore();
 }
 
@@ -3856,7 +3951,7 @@ const ITEM_ART = {
   peseta: {
     width: 16, height: 14, frames: 3, frameNames: index => `peseta_spin${index}`,
     paint(context, frame) {
-      const squeeze = [1, 0.55, 0.16][frame];
+      const squeeze = [1, 0.66, 0.34][frame];
       context.save();
       context.translate(8, 7);
       context.scale(squeeze, 1);
@@ -4000,6 +4095,118 @@ const ITEM_ART = {
 return { ITEM_ART };
 })();
 
+// ─── src/graphics/enemyArtCameos.js ───
+const __module_src_graphics_enemyArtCameos_js = (() => {
+/**
+ * @file Dibujo vectorial de los personajes de cameo que charlan por los
+ * niveles: el oso del madroño, un gato callejero, Don Quijote, Sancho y una
+ * bailaora. Miran a la IZQUIERDA como el resto.
+ */
+const { TAU, tube, curveTube, shadedEllipse, shadedRect, eye, mouth, sheen } = __module_src_graphics_creatureKit_js;
+const { roundedPath } = __module_src_graphics_shapes_js;
+
+const CAMEO_ART = {
+  oso: {
+    width: 20, height: 24, frames: 1,
+    paint(context) {
+      // Madroño detrás con frutos rojos.
+      tube(context, 17, 24, 17, 12, 2.4, '#8a5a30');
+      for (const [x, y, r] of [[14, 8, 4.4], [19, 9, 3.6], [16.4, 5, 3.8]]) shadedEllipse(context, x, y, r, r, '#3aa04a', { light: '#8af08a', dark: '#145a2a' });
+      for (const [x, y] of [[13, 9], [18, 6], [19.6, 11], [15, 4.4]]) { shadedEllipse(context, x, y, 1.1, 1.1, '#e02a2a', { light: '#ff8a8a' }); }
+      // Oso erguido.
+      for (const x of [5, 9.6]) { tube(context, x, 19, x, 23.2, 3, '#7a4a28'); shadedEllipse(context, x - 0.4, 23.6, 2.4, 1, '#4a2a14'); }
+      shadedEllipse(context, 7.6, 15, 5.8, 6.2, '#8a5a30', { light: '#c08a58', dark: '#4a2a14' });
+      shadedEllipse(context, 7.6, 16.4, 3.4, 4, '#d8b080', { light: '#f4d8a8' });
+      tube(context, 3, 12.4, 1.4, 16.4, 2.6, '#8a5a30');
+      tube(context, 12.6, 12.4, 14.4, 15.4, 2.6, '#8a5a30');
+      shadedEllipse(context, 7.6, 7.4, 4.8, 4.4, '#8a5a30', { light: '#c08a58', dark: '#4a2a14' });
+      shadedEllipse(context, 3.6, 3.6, 1.8, 1.8, '#8a5a30'); shadedEllipse(context, 11.6, 3.6, 1.8, 1.8, '#8a5a30');
+      shadedEllipse(context, 5.4, 9, 2.6, 2.2, '#d8b080', { light: '#f4d8a8' });
+      shadedEllipse(context, 3.6, 8.4, 1.1, 0.8, '#140c20');
+      eye(context, 5.6, 6.2, 1, { lookX: -0.9 }); eye(context, 9.4, 6.2, 1, { lookX: -0.9 });
+    }
+  },
+
+  gato: {
+    width: 16, height: 16, frames: 1,
+    paint(context) {
+      curveTube(context, [[11, 13.6], [15, 13], [15.6, 9.6], [13.6, 8.4]], 1.8, '#2a2636');
+      shadedEllipse(context, 8.4, 12, 4.8, 4, '#3a3548', { light: '#6a6480', dark: '#14101c' });
+      for (const x of [5.6, 9]) { tube(context, x, 13.6, x - 0.6, 15.6, 1.8, '#3a3548'); }
+      shadedEllipse(context, 5.2, 7.2, 3.6, 3.4, '#3a3548', { light: '#6a6480', dark: '#14101c' });
+      for (const [x, tilt] of [[2.8, -0.2], [7.6, 0.2]]) { context.fillStyle = '#3a3548'; context.beginPath(); context.moveTo(x - 1.4, 5); context.lineTo(x + tilt * 3, 1.6); context.lineTo(x + 1.4, 5); context.closePath(); context.fill(); }
+      context.fillStyle = '#ff9aa8'; context.beginPath(); context.moveTo(3.4, 4.4); context.lineTo(2.9, 3); context.lineTo(4.2, 4.2); context.fill();
+      for (const x of [4, 6.6]) { context.fillStyle = '#ffe45a'; context.beginPath(); context.ellipse(x, 7, 1.2, 1.4, 0, 0, TAU); context.fill(); context.fillStyle = '#140c20'; context.beginPath(); context.ellipse(x - 0.3, 7, 0.4, 1.1, 0, 0, TAU); context.fill(); }
+      context.fillStyle = '#ff9aa8'; context.beginPath(); context.arc(2.8, 8.6, 0.5, 0, TAU); context.fill();
+      context.strokeStyle = '#e8e8f4'; context.lineWidth = 0.35; for (const dy of [-0.5, 0.4]) { context.beginPath(); context.moveTo(2, 8.6 + dy); context.lineTo(-0.6, 8.2 + dy * 2); context.stroke(); }
+    }
+  },
+
+  quijote: {
+    width: 16, height: 24, frames: 1,
+    paint(context) {
+      // Lanza.
+      context.strokeStyle = '#8a5a30'; context.lineWidth = 1; context.beginPath(); context.moveTo(14, 26); context.lineTo(14, -2); context.stroke();
+      context.fillStyle = '#d8dce8'; context.beginPath(); context.moveTo(13, -1.6); context.lineTo(14, -5); context.lineTo(15, -1.6); context.closePath(); context.fill();
+      for (const x of [6.4, 9.2]) { tube(context, x, 16, x, 22.6, 1.8, '#b8bcc8'); shadedEllipse(context, x - 0.3, 23.2, 2.4, 1, '#6a6e7a'); }
+      shadedRect(context, 4.4, 8.6, 7, 9, 2, '#c8ccd8', { light: '#f0f2f8', dark: '#6a6e7a' });
+      context.fillStyle = '#d83a3a'; context.fillRect(4.4, 12.4, 7, 1.4);
+      tube(context, 11.2, 10, 13.6, 13.4, 1.8, '#b8bcc8');
+      shadedEllipse(context, 14, 13.8, 1.4, 1.4, '#ffd0b0');
+      tube(context, 4.8, 10, 3.4, 14, 1.8, '#b8bcc8');
+      // Cabeza alargada con bacía por yelmo y perilla.
+      shadedEllipse(context, 8, 5.6, 3.4, 4, '#ffd0a8', { dark: '#c8906a' });
+      shadedEllipse(context, 8, 2.2, 4.6, 2.2, '#e8d070', { light: '#fff4a8', dark: '#a8861c' });
+      context.fillStyle = '#e8d070'; context.beginPath(); context.arc(8, 0.8, 1.1, 0, TAU); context.fill();
+      eye(context, 6.6, 5.4, 1.1, { lookX: -0.8 }); eye(context, 9.4, 5.4, 1.1, { lookX: -0.8 });
+      context.fillStyle = '#5a3a20'; roundedPath(context, 4.6, 7.2, 4.8, 1, 0.5); context.fill();
+      context.beginPath(); context.moveTo(7, 9.2); context.lineTo(8.4, 11.2); context.lineTo(9.4, 9.2); context.closePath(); context.fill();
+    }
+  },
+
+  sancho: {
+    width: 16, height: 20, frames: 1,
+    paint(context) {
+      for (const x of [6, 10]) { tube(context, x, 15, x, 18.8, 2.2, '#a8683a'); shadedEllipse(context, x - 0.3, 19.4, 2.6, 1, '#4a2a14'); }
+      shadedEllipse(context, 8, 12, 6.2, 5.4, '#e8d8a8', { light: '#fffbe0', dark: '#a89860' });
+      shadedRect(context, 3.4, 10, 9.2, 2.2, 1, '#8a5a30');
+      // Bota de vino.
+      shadedEllipse(context, 13.6, 13, 2.6, 3.4, '#a8322c', { light: '#e87a6a' });
+      tube(context, 4, 8.6, 2.6, 12, 2, '#ffd0b0');
+      tube(context, 12, 8.6, 13.6, 11.4, 2, '#ffd0b0');
+      shadedEllipse(context, 8, 5, 4.2, 4, '#ffd0b0', { dark: '#c8906a' });
+      shadedEllipse(context, 8, 1.8, 5.6, 1.6, '#8a5a30'); shadedEllipse(context, 8, 1.2, 3, 1.8, '#a8683a');
+      eye(context, 6.2, 5, 1.1, { lookX: -0.8 }); eye(context, 9.6, 5, 1.1, { lookX: -0.8 });
+      mouth(context, 7.6, 7.6, 2.6, 'grin');
+    }
+  },
+
+  bailaora: {
+    width: 16, height: 24, frames: 1,
+    paint(context) {
+      for (const x of [6.4, 9.6]) { tube(context, x, 18, x, 22.6, 1.8, '#ffc8a0'); shadedEllipse(context, x - 0.3, 23.4, 2.6, 1, '#e02a2a'); }
+      // Falda de volantes.
+      context.beginPath(); context.moveTo(5.6, 11); context.lineTo(10.6, 11); context.lineTo(15.2, 21); context.quadraticCurveTo(8, 23.6, 0.6, 21); context.closePath();
+      const dress = context.createLinearGradient(0, 11, 16, 22); dress.addColorStop(0, '#ff5a6a'); dress.addColorStop(1, '#a8102a'); context.fillStyle = dress; context.fill();
+      context.fillStyle = '#ffffff'; for (const [x, y] of [[4, 17], [8, 15], [12, 18], [6, 20], [10, 21]]) { context.beginPath(); context.arc(x, y, 0.7, 0, TAU); context.fill(); }
+      context.strokeStyle = 'rgba(255,255,255,0.5)'; context.lineWidth = 0.5; context.beginPath(); context.moveTo(1.4, 19.4); context.quadraticCurveTo(8, 22, 14.6, 19.4); context.stroke();
+      shadedRect(context, 5.4, 8.6, 5.6, 4.6, 1.6, '#e02a3a');
+      tube(context, 10.4, 9.4, 13.6, 4.6, 1.6, '#ffc8a0');
+      tube(context, 5.4, 9.4, 3.4, 13, 1.6, '#ffc8a0');
+      // Cabeza con moño y rosa.
+      shadedEllipse(context, 8, 5.2, 3.8, 3.8, '#ffc8a0', { dark: '#c8906a' });
+      shadedEllipse(context, 8, 2.4, 4, 2.4, '#2a1a22', { light: '#5a3a44' });
+      shadedEllipse(context, 11.4, 2.8, 1.8, 1.8, '#2a1a22');
+      shadedEllipse(context, 5, 1.6, 1.8, 1.6, '#ff5a8a', { light: '#ffb0c8' });
+      eye(context, 6.6, 5, 1, { lookX: -0.8 }); eye(context, 9.4, 5, 1, { lookX: -0.8 });
+      context.fillStyle = '#e02a3a'; context.beginPath(); context.ellipse(7.8, 7.4, 1.2, 0.5, 0, 0, TAU); context.fill();
+      sheen(context, 6.4, 3, 1.4, 0.5, -0.3, 0.4);
+    }
+  }
+};
+return { CAMEO_ART };
+})();
+
 // ─── src/graphics/enemyArt.js ───
 const __module_src_graphics_enemyArt_js = (() => {
 /**
@@ -4016,9 +4223,10 @@ const { HUMAN_ENEMIES } = __module_src_graphics_enemyArtHumans_js;
 const { ANIMAL_ENEMIES } = __module_src_graphics_enemyArtAnimals_js;
 const { FLYER_ENEMIES } = __module_src_graphics_enemyArtFlyers_js;
 const { ITEM_ART } = __module_src_graphics_itemArt_js;
+const { CAMEO_ART } = __module_src_graphics_enemyArtCameos_js;
 
 /** Todos los dibujos, por identificador. */
-const ALL_ART = { ...HUMAN_ENEMIES, ...ANIMAL_ENEMIES, ...FLYER_ENEMIES, ...ITEM_ART };
+const ALL_ART = { ...HUMAN_ENEMIES, ...ANIMAL_ENEMIES, ...FLYER_ENEMIES, ...ITEM_ART, ...CAMEO_ART };
 
 /**
  * Crea todos los sprites vectoriales.
@@ -4272,10 +4480,13 @@ const SAVE_KEY = 'superpaco_progress_v2';
  * @typedef {Object} SavedProgress
  * @property {number} highestUnlockedLevel Índice (desde 0) del último nivel alcanzado.
  * @property {number} highScore Mejor puntuación conseguida.
+ * @property {number[]} seeds Niveles cuya Semilla Maravilla se ha conseguido alguna vez.
+ * @property {string[]} bigCoins Monedas gigantes conseguidas alguna vez ("nivel:número").
+ * @property {boolean} chefMode Se ha descubierto el truco del cocinero.
  */
 
 /** @type {SavedProgress} */
-const EMPTY_PROGRESS = Object.freeze({ highestUnlockedLevel: 0, highScore: 0 });
+const EMPTY_PROGRESS = Object.freeze({ highestUnlockedLevel: 0, highScore: 0, seeds: [], bigCoins: [], chefMode: false });
 
 /**
  * Lee el progreso guardado.
@@ -4304,13 +4515,16 @@ function saveProgress(progress) {
 
 /**
  * Actualiza el progreso guardado quedándose siempre con los valores máximos.
- * @param {{unlockedLevel?: number, score?: number}} achievement Lo conseguido ahora.
+ * @param {{unlockedLevel?: number, score?: number, seeds?: Iterable<number>, bigCoins?: Iterable<string>, chefMode?: boolean}} achievement Lo conseguido ahora.
  * @returns {SavedProgress} El progreso resultante.
  */
-function recordAchievement({ unlockedLevel = 0, score = 0 }) {
+function recordAchievement({ unlockedLevel = 0, score = 0, seeds = [], bigCoins = [], chefMode = false }) {
   const progress = loadProgress();
   progress.highestUnlockedLevel = Math.max(progress.highestUnlockedLevel, unlockedLevel);
   progress.highScore = Math.max(progress.highScore, score);
+  progress.seeds = [...new Set([...(progress.seeds || []), ...seeds])];
+  progress.bigCoins = [...new Set([...(progress.bigCoins || []), ...bigCoins])];
+  progress.chefMode = Boolean(progress.chefMode || chefMode);
   saveProgress(progress);
   return progress;
 }
@@ -4602,14 +4816,22 @@ const TILE = Object.freeze({
   LAVA: 12,
   WATER: 13,
   BRIDGE: 14,
-  COIN: 16
+  COIN: 16,
+  /**
+   * Plataformas "al ritmo": los grupos A y B se alternan con cada pulso de la
+   * Flor Maravilla del compás. ON = sólida; OFF = fantasma (se ve pero se atraviesa).
+   */
+  BEAT_A_ON: 17,
+  BEAT_A_OFF: 18,
+  BEAT_B_ON: 19,
+  BEAT_B_OFF: 20
 });
 
 /** Baldosas que bloquean el paso en todas las direcciones. */
 const SOLID_TILES = new Set([
   TILE.GROUND, TILE.BRICK, TILE.QUESTION_BLOCK, TILE.USED_BLOCK, TILE.AZULEJO,
   TILE.BARREL_TOP_LEFT, TILE.BARREL_TOP_RIGHT, TILE.BARREL_BODY_LEFT, TILE.BARREL_BODY_RIGHT,
-  TILE.BRIDGE
+  TILE.BRIDGE, TILE.BEAT_A_ON, TILE.BEAT_B_ON
 ]);
 
 /**
@@ -4643,7 +4865,31 @@ const BLOCK_CONTENT = Object.freeze({
   /** Décimo de lotería: vida extra. */
   EXTRA_LIFE: 'extraLife'
 });
-return { TILE, isSolidTile, isLiquidTile, BLOCK_CONTENT };
+
+/**
+ * ¿Es una plataforma "al ritmo"?
+ * @param {number} tileId
+ * @returns {boolean}
+ */
+function isBeatTile(tileId) {
+  return tileId >= TILE.BEAT_A_ON && tileId <= TILE.BEAT_B_OFF;
+}
+
+/**
+ * Invierte las plataformas al ritmo: las sólidas pasan a fantasma y viceversa.
+ * @param {number} tileId
+ * @returns {number}
+ */
+function toggleBeatTile(tileId) {
+  switch (tileId) {
+    case TILE.BEAT_A_ON: return TILE.BEAT_A_OFF;
+    case TILE.BEAT_A_OFF: return TILE.BEAT_A_ON;
+    case TILE.BEAT_B_ON: return TILE.BEAT_B_OFF;
+    case TILE.BEAT_B_OFF: return TILE.BEAT_B_ON;
+    default: return tileId;
+  }
+}
+return { TILE, isSolidTile, isLiquidTile, BLOCK_CONTENT, isBeatTile, toggleBeatTile };
 })();
 
 // ─── src/world/TileMap.js ───
@@ -4873,6 +5119,38 @@ const THEMES = Object.freeze({
     hasClouds: false, groundPlant: null, pitFilling: 'lava', hasCeiling: true,
     grade: { color: '#6a3aff', alpha: 0.2, mode: 'soft-light' }, vignette: 0.68, bloom: 0.34,
     lighting: { darkness: 0.52, color: '#04020c', playerLightRadius: 96 }
+  },
+  /* ---- Salas secretas (no son ciudades; se entra por puertas y alcantarillas) ---- */
+  taberna: {
+    name: 'taberna',
+    skyColors: ['#2a160c', '#3c2012', '#5a3018'],
+    ground: { pattern: 'floorTiles', baseColor: '#8a5a34', lightColor: '#c8905a', darkColor: '#5a3a20', mortarColor: '#2c1a0e' },
+    brickColors: { base: '#b8662a', mortar: '#4a2410', highlight: '#e8a060' },
+    oneWayPlatform: { kind: 'plank', primaryColor: '#a8683a', secondaryColor: '#6a3c1a', edgeColor: '#2c1a0e' },
+    movingPlatformLook: 'wood',
+    hasClouds: false, groundPlant: null, pitFilling: null, hasCeiling: true,
+    grade: { color: '#ffb060', alpha: 0.18, mode: 'soft-light' }, vignette: 0.55, bloom: 0.34
+  },
+  bodega: {
+    name: 'bodega',
+    skyColors: ['#14081c', '#201030', '#2c1840'],
+    ground: { pattern: 'stoneBlocks', baseColor: '#6a5a78', lightColor: '#9484a4', darkColor: '#40344c', mortarColor: '#1c1428' },
+    brickColors: { base: '#8a4a5a', mortar: '#3a1c28', highlight: '#c0809a' },
+    oneWayPlatform: { kind: 'plank', primaryColor: '#7a5a48', secondaryColor: '#4a3428', edgeColor: '#1c1428' },
+    movingPlatformLook: 'wood',
+    hasClouds: false, groundPlant: null, pitFilling: null, hasCeiling: true,
+    grade: { color: '#a04aff', alpha: 0.2, mode: 'soft-light' }, vignette: 0.62, bloom: 0.34,
+    lighting: { darkness: 0.3, color: '#08020e', playerLightRadius: 100 }
+  },
+  gruta: {
+    name: 'gruta',
+    skyColors: ['#04141c', '#082838', '#0c3a4c'],
+    ground: { pattern: 'speckled', baseColor: '#2c4a5c', lightColor: '#5a8aa0', darkColor: '#162c3a', mortarColor: '#0a1822', topLayer: 'rock' },
+    brickColors: { base: '#3a6a80', mortar: '#102430', highlight: '#78b0c8' },
+    oneWayPlatform: { kind: 'plank', primaryColor: '#4a7a90', secondaryColor: '#2c4c5c', edgeColor: '#0a1822' },
+    movingPlatformLook: 'stone',
+    hasClouds: false, groundPlant: null, pitFilling: null, hasCeiling: true,
+    grade: { color: '#3affd0', alpha: 0.18, mode: 'soft-light' }, vignette: 0.6, bloom: 0.5
   }
 });
 return { THEMES };
@@ -4908,7 +5186,7 @@ const GOAL_POLE_TOP_ROW = 3;
 
 /**
  * @typedef {Object} SpawnPoint Algo que aparece cuando la cámara se acerca.
- * @property {'enemy'|'movingPlatform'|'fireBar'|'windmillBlades'|'lavaBubble'} kind
+ * @property {'enemy'|'movingPlatform'|'fireBar'|'windmillBlades'|'lavaBubble'|'wonderFlower'|'bigCoin'|'talker'|'door'} kind
  * @property {number} column
  * @property {number} row
  * @property {string} [enemyId] Tipo de enemigo (clave del catálogo de enemigos).
@@ -4934,6 +5212,10 @@ const GOAL_POLE_TOP_ROW = 3;
  * @property {number|null} checkpointColumn
  * @property {number|null} goalColumn
  * @property {{firstColumn: number, lastColumn: number}|null} bossArena
+ * @property {{kind: string, startColumn: number, endColumn: number}|null} wonder Flor Maravilla del nivel.
+ * @property {Object<string, () => LevelData>} roomBuilders Salas secretas, que se construyen al entrar.
+ * @property {number} bigCoinCount Cuántas monedas gigantes tiene el nivel.
+ * @property {boolean} isRoom true si es una sala secreta y no un nivel entero.
  */
 
 /**
@@ -4963,6 +5245,11 @@ class LevelBuilder {
     this.checkpointColumn = null;
     this.goalColumn = null;
     this.bossArena = null;
+    this.wonder = null;
+    this.roomBuilders = {};
+    this.bigCoinCount = 0;
+    /** Las salas secretas no tienen meta ni nubes ni plantas automáticas. */
+    this.isRoom = false;
   }
 
   /* ---------------- Terreno ---------------- */
@@ -4976,6 +5263,33 @@ class LevelBuilder {
   addGround(fromColumn, toColumn, topRow = GROUND_TOP_ROW) {
     for (let column = fromColumn; column <= toColumn; column++) {
       for (let row = topRow; row < LEVEL_ROWS; row++) this.tileMap.setTile(column, row, TILE.GROUND);
+    }
+  }
+
+  /**
+   * Colina de suelo con las esquinas escalonadas.
+   * @param {number} fromColumn
+   * @param {number} toColumn Incluida.
+   * @param {number} height Altura máxima en baldosas sobre el suelo normal (1 a 3).
+   */
+  addHill(fromColumn, toColumn, height) {
+    for (let column = fromColumn; column <= toColumn; column++) {
+      const isEdge = column === fromColumn || column === toColumn;
+      const columnHeight = isEdge ? Math.max(1, height - 1) : height;
+      this.addGround(column, column, GROUND_TOP_ROW - columnHeight);
+    }
+  }
+
+  /**
+   * Cornisa flotante con un pasillo por debajo: se puede pasar por debajo (fácil)
+   * o saltar encima (4 baldosas, con carrerilla) para llegar a premios y plataformas.
+   * @param {number} fromColumn
+   * @param {number} length Columnas de largo.
+   */
+  addLedge(fromColumn, length) {
+    for (let column = fromColumn; column < fromColumn + length; column++) {
+      this.tileMap.setTile(column, 9, TILE.GROUND);
+      this.tileMap.setTile(column, 10, TILE.GROUND);
     }
   }
 
@@ -5139,6 +5453,116 @@ class LevelBuilder {
     this.firecrackerZones.push({ startX: fromColumn * TILE_SIZE, endX: toColumn * TILE_SIZE });
   }
 
+  /* ---------------- Maravillas, secretos y salas ---------------- */
+
+  /**
+   * Flor Maravilla: al tocarla, el nivel se transforma hasta `endColumn`.
+   * Cada nivel tiene como mucho una. Al terminar aparece la Semilla Maravilla.
+   * @param {Object} flower
+   * @param {number} flower.column Columna de la flor (empieza el efecto).
+   * @param {number} [flower.row] Fila que pisa (por defecto, la del suelo normal).
+   * @param {'moon'|'rain'|'rhythm'|'dark'|'stampede'|'parade'} flower.kind Qué transformación provoca.
+   * @param {number} flower.endColumn Columna donde termina el efecto y aparece la semilla.
+   */
+  addWonder({ column, row = STANDING_ROW, kind, endColumn }) {
+    this.wonder = { kind, startColumn: column, endColumn };
+    this.spawnPoints.push({ kind: 'wonderFlower', column, row, settings: { eventKind: kind, endColumn } });
+  }
+
+  /**
+   * Moneda gigante escondida. Cada nivel debería tener tres.
+   * @param {number} column
+   * @param {number} row
+   */
+  addBigCoin(column, row) {
+    this.spawnPoints.push({ kind: 'bigCoin', column, row, settings: { number: this.bigCoinCount } });
+    this.bigCoinCount++;
+  }
+
+  /**
+   * Reserva el número de una moneda gigante que se pondrá en una sala secreta.
+   * @returns {number} Número de la moneda dentro del nivel.
+   */
+  reserveBigCoin() {
+    return this.bigCoinCount++;
+  }
+
+  /**
+   * Coloca la moneda gigante de una sala secreta con el número que se reservó en el nivel.
+   * @param {number} column
+   * @param {number} row
+   * @param {number} number Número devuelto por {@link reserveBigCoin}.
+   */
+  addNumberedBigCoin(column, row, number) {
+    this.spawnPoints.push({ kind: 'bigCoin', column, row, settings: { number } });
+  }
+
+  /**
+   * Arco de pesetas sueltas (sube y baja como un salto).
+   * @param {number} column Primera columna.
+   * @param {number} row Fila de los extremos.
+   * @param {number} count Número de pesetas.
+   * @param {number} [height] Cuánto sube el centro del arco, en baldosas.
+   */
+  addCoinArc(column, row, count, height = 2) {
+    for (let index = 0; index < count; index++) {
+      const lift = Math.round(Math.sin((index + 0.5) / count * Math.PI) * height);
+      this.tileMap.setTile(column + index, row - lift, TILE.COIN);
+    }
+  }
+
+  /**
+   * Personaje que charla cuando Paco se acerca (flores cotillas y cameos).
+   * @param {number} column
+   * @param {string[]} lines Frases; va diciendo una distinta cada vez.
+   * @param {Object} [options]
+   * @param {number} [options.row] Fila que pisa.
+   * @param {string} [options.look] 'flower' o el nombre de un sprite ('abuela', 'oveja_frame1'…).
+   */
+  addTalker(column, lines, { row = STANDING_ROW, look = 'flower' } = {}) {
+    this.spawnPoints.push({ kind: 'talker', column, row, settings: { lines, look } });
+  }
+
+  /**
+   * Entrada a una sala secreta. Se usa con ABAJO (alcantarilla) o ARRIBA (puerta).
+   * @param {Object} door
+   * @param {number} door.column
+   * @param {number} [door.row]
+   * @param {'manhole'|'door'} door.look
+   * @param {string} door.roomId Clave de una sala añadida con {@link addRoom}.
+   */
+  addDoor({ column, row = STANDING_ROW, look, roomId }) {
+    this.spawnPoints.push({ kind: 'door', column, row, settings: { look, roomId, direction: 'enter' } });
+  }
+
+  /**
+   * Define una sala secreta, que se construye al entrar en ella.
+   * @param {string} roomId
+   * @param {() => LevelData} buildRoom Debe devolver `room.build()` de otro LevelBuilder.
+   */
+  addRoom(roomId, buildRoom) {
+    this.roomBuilders[roomId] = buildRoom;
+  }
+
+  /**
+   * Plataformas "al ritmo" (se alternan con el pulso de la Flor Maravilla del compás).
+   * @param {number} column
+   * @param {number} row
+   * @param {number} length
+   * @param {'A'|'B'} group Los del grupo A empiezan sólidos y los del B, fantasma.
+   */
+  addBeatPlatforms(column, row, length, group) {
+    for (let offset = 0; offset < length; offset++) {
+      this.tileMap.setTile(column + offset, row, group === 'A' ? TILE.BEAT_A_ON : TILE.BEAT_B_OFF);
+    }
+  }
+
+  /** Marca la sala como tal y le pone una puerta de salida en `column`. */
+  setRoomExit(column, { row = STANDING_ROW, look = 'door' } = {}) {
+    this.isRoom = true;
+    this.spawnPoints.push({ kind: 'door', column, row, settings: { look, roomId: null, direction: 'exit' } });
+  }
+
   /* ---------------- Decorados y puntos clave ---------------- */
 
   /** Cartel de madera con un texto (memes, señales…). */
@@ -5231,7 +5655,7 @@ class LevelBuilder {
   build() {
     const theme = THEMES[this.themeName];
     this.fillPits(theme.pitFilling);
-    this.addAutomaticScenery(theme);
+    if (!this.isRoom) this.addAutomaticScenery(theme);
     return {
       themeName: this.themeName,
       tileMap: this.tileMap,
@@ -5241,11 +5665,121 @@ class LevelBuilder {
       firecrackerZones: this.firecrackerZones,
       checkpointColumn: this.checkpointColumn,
       goalColumn: this.goalColumn,
-      bossArena: this.bossArena
+      bossArena: this.bossArena,
+      wonder: this.wonder,
+      roomBuilders: this.roomBuilders,
+      bigCoinCount: this.bigCoinCount,
+      isRoom: this.isRoom
     };
   }
 }
 return { GOAL_POLE_TOP_ROW, blockKey, LevelBuilder };
+})();
+
+// ─── src/world/rooms.js ───
+const __module_src_world_rooms_js = (() => {
+/**
+ * @file Salas secretas reutilizables: sala de pesetas, tienda de premios y
+ * sala de pruebas. Cada fábrica devuelve la función que se pasa a
+ * `LevelBuilder.addRoom`; la sala se construye al entrar en ella.
+ *
+ * Todas llevan una moneda gigante (numerada por el nivel con
+ * `reserveBigCoin`), un personaje que charla y una puerta de salida.
+ */
+const { LevelBuilder } = __module_src_world_LevelBuilder_js;
+const { BLOCK_CONTENT } = __module_src_world_tileTypes_js;
+
+/** Ancho de la sala de pesetas y de la tienda. */
+const SMALL_ROOM_WIDTH = 38;
+/** Ancho de la sala de pruebas. */
+const CHALLENGE_ROOM_WIDTH = 44;
+
+/**
+ * Sala de pesetas: un arco de monedas, plataformas y la moneda gigante en lo más alto.
+ * @param {Object} options
+ * @param {string} options.themeName Tema de la sala ('taberna', 'bodega', 'gruta').
+ * @param {number} options.bigCoinNumber Número reservado con `reserveBigCoin`.
+ * @param {string[]} options.lines Lo que dice el personaje.
+ * @param {string} [options.talkerLook] 'flower' o el sprite de un cameo.
+ * @returns {() => import('./LevelBuilder.js').LevelData}
+ */
+function createCoinRoom({ themeName, bigCoinNumber, lines, talkerLook = 'flower' }) {
+  return () => {
+    const room = new LevelBuilder(SMALL_ROOM_WIDTH, themeName);
+    room.addCeiling(0, SMALL_ROOM_WIDTH - 1);
+    room.addGround(0, SMALL_ROOM_WIDTH - 1);
+    room.addTalker(7, lines, { look: talkerLook });
+    room.addCoinArc(10, 11, 9, 3);
+    room.addOneWayPlatform(11, 9, 3);
+    room.addCoinRow(11, 8, 3);
+    room.addOneWayPlatform(16, 7, 3);
+    room.addCoinRow(16, 6, 3);
+    room.addOneWayPlatform(21, 9, 3);
+    room.addCoinRow(21, 8, 3);
+    room.addNumberedBigCoin(17, 4, bigCoinNumber);
+    room.addCoinArc(26, 11, 6, 2);
+    room.setRoomExit(34);
+    return room.build();
+  };
+}
+
+/**
+ * Tienda de premios: tres bloques con regalos y una moneda gigante encima.
+ * @param {Object} options
+ * @param {string} options.themeName
+ * @param {number} options.bigCoinNumber
+ * @param {string[]} options.lines
+ * @param {string[]} [options.contents] Qué dan los tres bloques.
+ * @param {string} [options.talkerLook]
+ * @returns {() => import('./LevelBuilder.js').LevelData}
+ */
+function createShopRoom({ themeName, bigCoinNumber, lines, contents = [BLOCK_CONTENT.POWER_UP, BLOCK_CONTENT.CHURROS, BLOCK_CONTENT.POWER_UP], talkerLook = 'flower' }) {
+  return () => {
+    const room = new LevelBuilder(SMALL_ROOM_WIDTH, themeName);
+    room.addCeiling(0, SMALL_ROOM_WIDTH - 1);
+    room.addGround(0, SMALL_ROOM_WIDTH - 1);
+    room.addTalker(6, lines, { look: talkerLook });
+    room.addQuestionBlock(14, 9, contents[0]);
+    room.addQuestionBlock(18, 9, contents[1]);
+    room.addQuestionBlock(22, 9, contents[2]);
+    room.addOneWayPlatform(17, 5, 3);
+    room.addNumberedBigCoin(18, 3, bigCoinNumber);
+    room.addCoinRow(26, 8, 5);
+    room.setRoomExit(34);
+    return room.build();
+  };
+}
+
+/**
+ * Sala de pruebas: un foso largo que se cruza saltando entre plataformas con
+ * un enemigo volador; la moneda gigante espera al otro lado, en lo alto.
+ * @param {Object} options
+ * @param {string} options.themeName
+ * @param {number} options.bigCoinNumber
+ * @param {string[]} options.lines
+ * @returns {() => import('./LevelBuilder.js').LevelData}
+ */
+function createChallengeRoom({ themeName, bigCoinNumber, lines }) {
+  return () => {
+    const room = new LevelBuilder(CHALLENGE_ROOM_WIDTH, themeName);
+    room.addCeiling(0, CHALLENGE_ROOM_WIDTH - 1);
+    room.addGround(0, 6);
+    room.addTalker(4, lines);
+    // Foso de 24 columnas salvado con plataformas cada vez más estrechas.
+    const steps = [[9, 10, 3], [14, 8, 3], [19, 10, 2], [23, 7, 2], [27, 9, 2], [31, 8, 2]];
+    for (const [column, row, length] of steps) {
+      room.addOneWayPlatform(column, row, length);
+      room.addCoinRow(column, row - 1, length);
+    }
+    room.addEnemy('mosquito', 21, 6);
+    room.addGround(35, CHALLENGE_ROOM_WIDTH - 1);
+    room.addOneWayPlatform(37, 8, 3);
+    room.addNumberedBigCoin(38, 6, bigCoinNumber);
+    room.setRoomExit(41);
+    return room.build();
+  };
+}
+return { createCoinRoom, createShopRoom, createChallengeRoom };
 })();
 
 // ─── src/world/levels.js ───
@@ -5262,9 +5796,15 @@ const __module_src_world_levels_js = (() => {
  *   - Paco sube hasta 4 baldosas de altura con carrerilla (3 desde parado).
  *   - Los huecos sin plataforma miden como mucho 4 baldosas.
  *   - Los tramos largos de agua o lava siempre tienen una plataforma móvil.
+ *
+ * Cada nivel, además, tiene:
+ *   - una Flor Maravilla que transforma un tramo (y deja una Semilla al final),
+ *   - tres monedas gigantes (dos a la vista pero difíciles y una en una sala secreta),
+ *   - una sala secreta (alcantarilla o puerta) y flores cotillas con pistas y chistes.
  */
 const { LevelBuilder } = __module_src_world_LevelBuilder_js;
 const { BLOCK_CONTENT } = __module_src_world_tileTypes_js;
+const { createCoinRoom, createShopRoom, createChallengeRoom } = __module_src_world_rooms_js;
 
 const { MULTI_COIN, POWER_UP, CHURROS, EXTRA_LIFE } = BLOCK_CONTENT;
 
@@ -5285,11 +5825,20 @@ const LEVELS = [
     musicName: 'feria',
     timeLimit: 400,
     build() {
-      const level = new LevelBuilder(206, 'madrid');
+      const level = new LevelBuilder(254, 'madrid');
       // Inicio: primeros bloques y guiris para aprender a pisar.
       level.addGround(0, 64);
       level.addSign(4, 'KM 0');
       level.addDecoration('farola', 9);
+      level.addTalker(7, ['¡HOLA! SOY UNA FLOR COTILLA.\nSALTA SOBRE LOS GUIRIS: NO PICAN.', 'MANTÉN SALTAR PARA\nSALTAR MÁS ALTO.']);
+      level.addTalker(41, ['SOY EL MADROÑO.\nEL OSO ES MI AMIGO.', 'EN MADRID NO HAY MAR,\nPERO HAY CAÑAS.'], { look: 'oso' });
+      // Alcantarilla secreta: sala con pesetas y la primera moneda gigante.
+      level.addDoor({ column: 31, look: 'manhole', roomId: 'taberna' });
+      level.addRoom('taberna', createCoinRoom({
+        themeName: 'taberna',
+        bigCoinNumber: level.reserveBigCoin(),
+        lines: ['¡PSST! ESTA TABERNA\nNO EXISTE. SHHH.', '¡LA ÚLTIMA CAÑA\nES PARA TI!', '¿TE HAS FIJADO EN LA\nMONEDA GIGANTE ARRIBA?']
+      }));
       level.addQuestionBlock(13, 9);
       level.addBricks(17, 9);
       level.addQuestionBlock(18, 9, POWER_UP);
@@ -5317,9 +5866,17 @@ const LEVELS = [
       level.addBricks(75, 5, 7);
       level.addEnemy('paloma', 77, 4);
       level.addEnemy('paloma', 80, 4);
+      level.addBigCoin(78, 3);
       level.addEnemy('turista', 86);
-      // Tercer tramo con punto de control.
+      // Tercer tramo con punto de control. ¡Y la Flor Maravilla del desfile!
       level.addGround(96, 138);
+      level.addTalker(94, ['¡UNA FLOR BRILLANTE!\n¿A QUE NO TE ATREVES A TOCARLA?']);
+      level.addWonder({ column: 97, kind: 'parade', endColumn: 132 });
+      level.addEnemy('ejecutivo', 114);
+      level.addEnemy('guiri', 118);
+      level.addEnemy('paloma', 122);
+      level.addEnemy('guiri', 124);
+      level.addEnemy('ejecutivo', 128);
       level.addOneWayPlatform(98, 10, 3);
       level.addOneWayPlatform(102, 8, 3);
       level.addCoinRow(102, 7, 3);
@@ -5339,7 +5896,7 @@ const LEVELS = [
       level.addEnemy('paloma', 132);
       level.addStaircase(135, 4, 'up');
       // Hueco entre escaleras y recta final.
-      level.addGround(141, 205);
+      level.addGround(141, 253);
       level.addStaircase(141, 4, 'down');
       level.addBarrel(151, 2);
       level.addEnemy('guiri', 155);
@@ -5348,10 +5905,40 @@ const LEVELS = [
       level.addBricks(166, 9, 2);
       level.addQuestionBlock(168, 9);
       level.addBricks(169, 9);
+      // Ruta alta: escalera de balcones hasta la moneda gigante de los tejados.
+      level.addOneWayPlatform(153, 10, 2);
+      level.addOneWayPlatform(156, 8, 2);
+      level.addOneWayPlatform(159, 6, 2);
+      level.addOneWayPlatform(164, 4, 2);
+      level.addCoinArc(153, 9, 4, 1);
+      level.addBigCoin(165, 2);
+      level.addTalker(147, ['¿VES ESOS BALCONES?\nSUBE, SUBE... ¡HAY TESORO!']);
       level.addEnemy('paloma', 171);
-      level.addStaircase(174, 6, 'up');
-      level.addAzulejoBlocks(180, 7, 1, 6);
-      level.setGoal(190);
+      // Sector final: las azoteas. Cornisas con pasillo por debajo, colinas y torres.
+      level.addTalker(176, ['¡LA RECTA FINAL!\nPERO ANTES... UN PASEO POR LAS AZOTEAS.']);
+      level.addLedge(180, 10);
+      level.addCoinRow(181, 11, 8);
+      level.addEnemy('cucaracha', 184);
+      level.addEnemy('guiri', 187);
+      level.addQuestionBlock(184, 6, POWER_UP);
+      level.addCoinRow(182, 7, 6);
+      level.addEnemy('paloma', 189, 6);
+      level.addHill(194, 201, 2);
+      level.addEnemy('paloma', 197, 8);
+      level.addCoinArc(194, 9, 8, 2);
+      level.addBricks(196, 6, 3, EXTRA_LIFE);
+      level.addBarrel(205, 3);
+      level.addEnemy('guiri', 208);
+      level.addBarrel(212, 2, { withOctopus: true });
+      level.addLedge(216, 7);
+      level.addEnemy('ejecutivo', 219);
+      level.addCoinRow(217, 11, 5);
+      level.addAzulejoBlocks(224, 9, 1, 4);
+      level.addOneWayPlatform(221, 6, 4);
+      level.addCoinRow(221, 5, 4);
+      level.addStaircase(228, 6, 'up');
+      level.addAzulejoBlocks(234, 7, 1, 6);
+      level.setGoal(244);
       return level.build();
     }
   },
@@ -5361,9 +5948,18 @@ const LEVELS = [
     musicName: 'playa',
     timeLimit: 400,
     build() {
-      const level = new LevelBuilder(202, 'benidorm');
+      const level = new LevelBuilder(254, 'benidorm');
       level.addGround(0, 30);
       level.addSign(4, '1 € LA CAÑA');
+      level.addTalker(7, ['¡ESTO ES BENIDORM!\nAQUÍ TODO ES ALTO... MENOS EL SUELDO.', 'EL SOL SALE PARA TODOS.\nLA SOMBRA, SOLO PARA LOS DEL HOTEL.']);
+      level.addTalker(27, ['MIAU. ¿HAY PESCADITO\nEN ESTE CHIRINGUITO?'], { look: 'gato' });
+      // Puerta del chiringuito secreto: tienda de premios.
+      level.addDoor({ column: 19, look: 'door', roomId: 'chiringuito' });
+      level.addRoom('chiringuito', createShopRoom({
+        themeName: 'taberna',
+        bigCoinNumber: level.reserveBigCoin(),
+        lines: ['BIENVENIDO AL CHIRINGUITO.\nELIGE UN REGALO... ¡Y SIN COLA!', 'LA PAELLA ES DE BOTE.\nLOS BLOQUES, DE VERDAD.']
+      }));
       level.addQuestionBlock(10, 9);
       level.addQuestionBlock(11, 9, POWER_UP);
       level.addQuestionBlock(12, 9);
@@ -5386,6 +5982,8 @@ const LEVELS = [
       level.addOneWayPlatform(78, 6, 3);
       level.addCoinRow(78, 5, 3);
       level.addQuestionBlock(83, 9, POWER_UP);
+      level.addOneWayPlatform(82, 4, 3);
+      level.addBigCoin(83, 2);
       level.addEnemy('guiri', 86);
       level.addEnemy('guiri', 88);
       level.addEnemy('gaviota', 93, 7);
@@ -5393,6 +5991,20 @@ const LEVELS = [
       level.addStaircase(95, 3, 'up');
       level.addGround(101, 140);
       level.addStaircase(101, 3, 'down');
+      // Maravilla lunar: plataformas altísimas solo alcanzables con gravedad baja.
+      level.addTalker(104, ['¿SIENTES ESA BRISA?\nTOCA LA FLOR Y VERÁS... ¡QUE FLOTAS!']);
+      level.addWonder({ column: 105, kind: 'moon', endColumn: 138 });
+      level.addOneWayPlatform(107, 7, 3);
+      level.addCoinRow(107, 6, 3);
+      level.addOneWayPlatform(112, 4, 3);
+      level.addCoinRow(112, 3, 3);
+      level.addOneWayPlatform(117, 2, 3);
+      level.addCoinRow(117, 1, 3);
+      level.addBigCoin(121, 1);
+      level.addOneWayPlatform(124, 5, 3);
+      level.addCoinArc(124, 4, 3, 1);
+      level.addOneWayPlatform(130, 3, 3);
+      level.addCoinRow(130, 2, 3);
       level.addEnemy('turista', 110);
       level.addEnemy('turista', 112);
       level.addBricks(116, 9, 5);
@@ -5401,14 +6013,33 @@ const LEVELS = [
       level.addEnemy('gaviota', 131, 6);
       level.addSign(126, 'SE ALQUILA HAMACA');
       level.addMovingPlatform({ column: 141, row: 10, lengthInTiles: 3, axis: 'horizontal', travelInTiles: 7, speed: 1 });
-      level.addGround(151, 201);
+      level.addGround(151, 185);
       level.addEnemy('guiri', 158);
       level.addEnemy('turista', 163);
       level.addBarrel(167, 3);
       level.addBarrel(172, 4);
       level.addEnemy('gaviota', 176, 8);
-      level.addStaircase(179, 5, 'up');
-      level.setGoal(191);
+      // Sector final: la piscina, la terraza del hotel y las dunas.
+      level.addTalker(178, ['¡PISCINA PARA TODOS!\n(MENOS PARA TI: CAERÁS).']);
+      level.addHill(181, 184, 1);
+      level.addMovingPlatform({ column: 186, row: 10, lengthInTiles: 3, axis: 'horizontal', travelInTiles: 2, speed: 0.9 });
+      level.addGround(191, 253);
+      level.addLedge(196, 9);
+      level.addCoinRow(197, 11, 7);
+      level.addEnemy('turista', 200);
+      level.addQuestionBlock(199, 6, CHURROS);
+      level.addCoinRow(198, 7, 6);
+      level.addEnemy('gaviota', 203, 6);
+      level.addHill(208, 215, 2);
+      level.addCoinArc(208, 9, 8, 2);
+      level.addEnemy('guiri', 211, 10);
+      level.addBarrel(220, 3);
+      level.addEnemy('turista', 224);
+      level.addOneWayPlatform(227, 9, 3);
+      level.addOneWayPlatform(231, 7, 3);
+      level.addCoinRow(231, 6, 3);
+      level.addStaircase(236, 5, 'up');
+      level.setGoal(244);
       return level.build();
     }
   },
@@ -5418,9 +6049,18 @@ const LEVELS = [
     musicName: 'flamenco',
     timeLimit: 400,
     build() {
-      const level = new LevelBuilder(198, 'sevilla');
+      const level = new LevelBuilder(252, 'sevilla');
       level.addGround(0, 45);
       level.addSign(4, 'ILLO');
+      level.addTalker(6, ['¡ILLO! AQUÍ SE VIVE A 40 GRADOS\nY SIN NINGUNA PRISA.', 'SI SUENAN PALMAS,\nEL SUELO SE MUEVE. ¡FÍJATE!']);
+      level.addTalker(26, ['¡OLÉ! TÚ BAILAS MEJOR\nQUE UN GUIRI.', 'LAS PALMAS MANDAN.\nBUSCA UNA FLOR CON DUENDE.'], { look: 'bailaora' });
+      // Alcantarilla del patio: sala de pruebas en la bodega.
+      level.addDoor({ column: 38, look: 'manhole', roomId: 'bodega' });
+      level.addRoom('bodega', createChallengeRoom({
+        themeName: 'bodega',
+        bigCoinNumber: level.reserveBigCoin(),
+        lines: ['LA BODEGA DEL ABUELO.\nEL VINO, ¡AL OTRO LADO DEL FOSO!', '¿TIENES BUEN PULSO?\nPUES SALTA, SALTA...']
+      }));
       level.addDecoration('farola', 7);
       // Toldos de las casetas de feria.
       level.addOneWayPlatform(9, 10, 4);
@@ -5439,6 +6079,7 @@ const LEVELS = [
       level.addOneWayPlatform(52, 9, 5);
       level.addOneWayPlatform(58, 6, 5);
       level.addQuestionBlock(60, 2, EXTRA_LIFE);
+      level.addBigCoin(64, 3);
       level.addEnemy('mosquito', 64, 8);
       level.addEnemy('caracol', 68);
       level.addEnemy('caracol', 70);
@@ -5461,8 +6102,22 @@ const LEVELS = [
       level.addCoinRow(117, 4, 3);
       level.addEnemy('mosquito', 114, 4);
       level.addStaircase(122, 4, 'up');
-      level.addGround(129, 197);
+      level.addGround(129, 251);
       level.addStaircase(129, 4, 'down');
+      // Maravilla al compás: plataformas que se alternan con las palmas.
+      level.addTalker(133, ['ESCUCHA... TACATÁ, TACATÁ.\nLAS PLATAFORMAS SIGUEN EL COMPÁS.']);
+      level.addWonder({ column: 135, kind: 'rhythm', endColumn: 170 });
+      level.addBeatPlatforms(138, 8, 3, 'A');
+      level.addBeatPlatforms(142, 8, 3, 'B');
+      level.addCoinRow(138, 7, 3);
+      level.addCoinRow(142, 7, 3);
+      level.addBeatPlatforms(153, 7, 3, 'A');
+      level.addBeatPlatforms(157, 7, 3, 'B');
+      level.addCoinRow(153, 6, 3);
+      level.addCoinRow(157, 6, 3);
+      level.addBeatPlatforms(161, 5, 3, 'A');
+      level.addBeatPlatforms(165, 5, 3, 'B');
+      level.addBigCoin(166, 3);
       level.addEnemy('madre', 137);
       level.addEnemy('guiri', 141);
       level.addEnemy('guiri', 143);
@@ -5473,8 +6128,27 @@ const LEVELS = [
       level.addBarrel(159, 2);
       level.addBarrel(165, 3);
       level.addEnemy('madre', 171);
-      level.addStaircase(175, 5, 'up');
-      level.setGoal(187);
+      // Sector final: soportales con túnel, el escenario de la feria y las casetas.
+      level.addTalker(173, ['¡LOS SOPORTALES! TIENEN TÚNEL\nY TODO. QUÉ LUJO.']);
+      level.addLedge(177, 10);
+      level.addCoinRow(178, 11, 8);
+      level.addEnemy('guiri', 181);
+      level.addEnemy('caracol', 185);
+      level.addQuestionBlock(182, 6, POWER_UP);
+      level.addEnemy('madre', 186, 8);
+      level.addHill(191, 198, 2);
+      level.addCoinArc(191, 9, 8, 2);
+      level.addEnemy('mosquito', 195, 7);
+      level.addBarrel(202, 4);
+      level.addEnemy('guiri', 205);
+      level.addLedge(212, 8);
+      level.addCoinRow(213, 11, 6);
+      level.addEnemy('caracol', 215);
+      level.addOneWayPlatform(222, 9, 3);
+      level.addOneWayPlatform(226, 7, 3);
+      level.addCoinRow(226, 6, 3);
+      level.addStaircase(232, 5, 'up');
+      level.setGoal(242);
       return level.build();
     }
   },
@@ -5484,9 +6158,18 @@ const LEVELS = [
     musicName: 'feria',
     timeLimit: 400,
     build() {
-      const level = new LevelBuilder(196, 'pamplona');
+      const level = new LevelBuilder(252, 'pamplona');
       level.addGround(0, 39);
       level.addSign(3, 'CORRE');
+      level.addTalker(6, ['¡CUIDADO CON LOS TOROS!\nSE SABEN TU CARA.', 'LOS BALCONES SON TUS AMIGOS.\nLOS TOROS, NO.']);
+      level.addTalker(22, ['SANFERMINES: DEL 6 AL 14\nDE JULIO... DE CADA AÑO.'], { look: 'sancho' });
+      // Puerta de la bodega de la peña.
+      level.addDoor({ column: 12, look: 'door', roomId: 'pena' });
+      level.addRoom('pena', createCoinRoom({
+        themeName: 'bodega',
+        bigCoinNumber: level.reserveBigCoin(),
+        lines: ['LA PEÑA ESTÁ DE FIESTA.\n¡ENTRA, QUE HAY CHISTORRA!', '¡VIVA SAN FERMÍN!\n¡GORA SAN FERMÍN!']
+      }));
       level.addOneWayPlatform(8, 9, 3);
       level.addEnemy('guiri', 14);
       level.addQuestionBlock(16, 9, POWER_UP);
@@ -5512,27 +6195,50 @@ const LEVELS = [
       level.addOneWayPlatform(86, 8, 3);
       level.addOneWayPlatform(90, 6, 3);
       level.addCoinRow(90, 5, 3);
+      level.addOneWayPlatform(94, 3, 3);
+      level.addBigCoin(95, 1);
       level.addEnemy('toro', 97);
       level.addAzulejoBlocks(100, 11, 1, 2);
       level.addQuestionBlock(103, 9, POWER_UP);
       level.addEnemy('toro', 106);
       level.addOneWayPlatform(111, 9, 2);
       level.addGround(114, 137);
+      // ¡El encierro! Un toro gigante persigue a Paco; las escaleras sirven de refugio.
+      level.addTalker(115, ['¿OYES ESE RUMOR?\n¡ES EL ENCIERRO! ¡CORRE O SUBE!']);
+      level.addWonder({ column: 116, kind: 'stampede', endColumn: 146 });
       level.addEnemy('guiri', 118);
       level.addEnemy('guiri', 120);
       level.addBricks(124, 9, 4);
       level.addQuestionBlock(125, 5, EXTRA_LIFE);
-      level.addEnemy('toro', 131);
       level.addStaircase(134, 4, 'up');
-      level.addGround(140, 195);
+      level.addGround(140, 251);
       level.addStaircase(140, 4, 'down');
       level.addEnemy('toro', 150);
       level.addAzulejoBlocks(154, 11, 1, 2);
       level.addEnemy('toro', 158);
       level.addOneWayPlatform(160, 9, 4);
+      level.addOneWayPlatform(164, 6, 2);
+      level.addBigCoin(165, 4);
       level.addEnemy('toro', 166);
-      level.addStaircase(170, 6, 'up');
-      level.setGoal(184);
+      // Sector final: calle Estafeta, con balcones-túnel y colinas.
+      level.addTalker(173, ['CALLE ESTAFETA: ¡POR AQUÍ\nPASAN LOS TOROS (Y LOS TURISTAS)!']);
+      level.addLedge(177, 11);
+      level.addCoinRow(178, 11, 9);
+      level.addEnemy('toro', 183);
+      level.addQuestionBlock(184, 6, POWER_UP);
+      level.addCoinRow(182, 7, 6);
+      level.addHill(192, 199, 2);
+      level.addEnemy('guiri', 196, 10);
+      level.addEnemy('toro', 204);
+      level.addAzulejoBlocks(208, 11, 1, 2);
+      level.addEnemy('toro', 214);
+      level.addOneWayPlatform(216, 9, 4);
+      level.addCoinRow(217, 8, 3);
+      level.addLedge(222, 7);
+      level.addCoinRow(223, 11, 5);
+      level.addEnemy('guiri', 225);
+      level.addStaircase(232, 6, 'up');
+      level.setGoal(242);
       return level.build();
     }
   },
@@ -5542,10 +6248,19 @@ const LEVELS = [
     musicName: 'metro',
     timeLimit: 400,
     build() {
-      const level = new LevelBuilder(196, 'metro');
-      level.addCeiling(0, 195);
+      const level = new LevelBuilder(252, 'metro');
+      level.addCeiling(0, 251);
       level.addGround(0, 40);
       level.addSign(3, 'LÍNEA 1');
+      level.addTalker(6, ['ESTE METRO TIENE MÁS RETRASOS\nQUE UN VERANO.', 'NO SE APOYEN EN LAS PUERTAS.\nYA, ESO LO SÉ.']);
+      level.addTalker(12, ['MIAU. SOLO VEO LÍNEA 1\nEN MI DESTINO.'], { look: 'gato' });
+      // Alcantarilla secreta: túnel de cristales.
+      level.addDoor({ column: 38, look: 'manhole', roomId: 'cristales' });
+      level.addRoom('cristales', createChallengeRoom({
+        themeName: 'gruta',
+        bigCoinNumber: level.reserveBigCoin(),
+        lines: ['UN TÚNEL QUE NO ESTÁ\nEN NINGÚN PLANO.', 'CUIDADO CON EL MOSQUITO...\nSE COLÓ POR LAS VÍAS.']
+      }));
       level.addBricks(8, 9, 6);
       level.addQuestionBlock(10, 9, POWER_UP);
       level.addEnemy('cucaracha', 15);
@@ -5557,12 +6272,16 @@ const LEVELS = [
       // Vagón que cruza las vías.
       level.addMovingPlatform({ column: 41, row: 10, lengthInTiles: 3, axis: 'horizontal', travelInTiles: 3, speed: 1 });
       level.addGround(47, 90);
+      // Maravilla en la oscuridad: se funden los plomos y solo se ve con la luz de Paco.
+      level.addTalker(48, ['¿HAS OÍDO ESE ZUMBIDO?\nCREO QUE SE VA LA LUZ...']);
+      level.addWonder({ column: 49, kind: 'dark', endColumn: 86 });
       level.addBricks(50, 9, 2);
       level.addBricks(52, 9, 1, EXTRA_LIFE);
       // Pasillo de ladrillos con pesetas dentro.
       level.addBricks(58, 9, 10);
       level.addBricks(58, 5, 10);
       level.addCoinRow(59, 7, 8);
+      level.addBigCoin(63, 6);
       level.addEnemy('ejecutivo', 64);
       level.addEnemy('turista', 71);
       level.addEnemy('cucaracha', 75);
@@ -5584,14 +6303,32 @@ const LEVELS = [
       level.addBricks(128, 9, 8);
       level.addCoinRow(128, 8, 8);
       level.addMovingPlatform({ column: 141, row: 10, lengthInTiles: 3, axis: 'horizontal', travelInTiles: 7, speed: 1.1 });
-      level.addGround(151, 195);
+      level.addGround(151, 251);
       level.addEnemy('turista', 156);
       level.addEnemy('ejecutivo', 160);
       level.addEnemy('ejecutivo', 162);
       level.addEnemy('ejecutivo', 164);
-      level.addStaircase(168, 4, 'up');
-      level.addAzulejoBlocks(172, 9, 2, 4);
-      level.setGoal(183);
+      // Sector final: el andén de la última estación.
+      level.addTalker(172, ['ÚLTIMA ESTACIÓN... ¡CASI!\nLOS TRENES AQUÍ SON DE PLATAFORMAS.']);
+      level.addLedge(176, 10);
+      level.addCoinRow(177, 11, 8);
+      level.addEnemy('cucaracha', 180);
+      level.addEnemy('cucaracha', 183);
+      level.addQuestionBlock(181, 6, POWER_UP);
+      level.addEnemy('cucavol', 186, 6);
+      level.addHill(192, 199, 2);
+      level.addEnemy('ejecutivo', 196, 10);
+      level.addBricks(204, 9, 6);
+      level.addCoinRow(204, 8, 6);
+      level.addEnemy('ejecutivo', 207);
+      level.addEnemy('ejecutivo', 210);
+      level.addLedge(214, 8);
+      level.addCoinRow(215, 11, 6);
+      level.addEnemy('turista', 218);
+      level.addBigCoin(218, 6);
+      level.addStaircase(226, 4, 'up');
+      level.addAzulejoBlocks(230, 9, 2, 4);
+      level.setGoal(241);
       return level.build();
     }
   },
@@ -5601,9 +6338,17 @@ const LEVELS = [
     musicName: 'muineira',
     timeLimit: 400,
     build() {
-      const level = new LevelBuilder(200, 'galicia');
+      const level = new LevelBuilder(250, 'galicia');
       level.addGround(0, 24);
       level.addSign(3, 'DEPENDE');
+      level.addTalker(6, ['¿SUBES O BAJAS? DEPENDE.\n¿LLUEVE? SIEMPRE.', 'AQUÍ EL SOL ES UNA LEYENDA\nURBANA.']);
+      // Puerta del pazo: tienda de premios en la bodega.
+      level.addDoor({ column: 22, look: 'door', roomId: 'pazo' });
+      level.addRoom('pazo', createShopRoom({
+        themeName: 'bodega',
+        bigCoinNumber: level.reserveBigCoin(),
+        lines: ['EL PAZO DE LAS MEIGAS.\nCOGE LO QUE QUIERAS... SIN RESPONDER.', '¿ES UN POLTERGEIST\nO UN PULPO? NON SEI.']
+      }));
       level.addQuestionBlock(9, 9);
       level.addQuestionBlock(10, 9, POWER_UP);
       level.addBarrel(14, 2, { withOctopus: true });
@@ -5614,6 +6359,8 @@ const LEVELS = [
       level.addBarrel(44, 3, { withOctopus: true });
       level.addOneWayPlatform(47, 9, 3);
       level.addOneWayPlatform(52, 10, 2); // Batea de mejillones sobre la ría.
+      level.addOneWayPlatform(53, 7, 2);
+      level.addBigCoin(54, 5);
       level.addGround(56, 90);
       level.addEnemy('caracol', 60);
       level.addEnemy('caracol', 62);
@@ -5622,11 +6369,15 @@ const LEVELS = [
       level.addBricks(68, 9, 1, MULTI_COIN);
       level.addBarrel(72, 4, { withOctopus: true });
       level.addEnemy('meiga', 76, 6);
+      level.addTalker(78, ['¡QUE NON, QUE NON!\n¿ESTO É UN PULPO Ó UN PERIFÉRICO?'], { look: 'sancho' });
       level.setCheckpoint(80);
       level.addSign(82, 'HABERLAS, HAYLAS');
       level.addGround(84, 90, 10);
       level.addMovingPlatform({ column: 91, row: 9, lengthInTiles: 3, axis: 'horizontal', travelInTiles: 3, speed: 0.8 });
       level.addGround(97, 140);
+      // Lluvia de pesetas: el orballo se vuelve dinero.
+      level.addTalker(98, ['ORBALLO, ORBALLO...\n¡HOY LLUEVEN PESETAS!']);
+      level.addWonder({ column: 99, kind: 'rain', endColumn: 136 });
       level.addBarrel(100, 2, { withOctopus: true });
       level.addBarrel(106, 3, { withOctopus: true });
       level.addBarrel(112, 2, { withOctopus: true });
@@ -5639,14 +6390,32 @@ const LEVELS = [
       level.addEnemy('caracol', 124);
       level.addEnemy('caracol', 126);
       level.addOneWayPlatform(142, 10, 2);
-      level.addGround(146, 199);
+      level.addGround(146, 249);
+      level.addOneWayPlatform(168, 9, 2);
+      level.addOneWayPlatform(171, 7, 2);
+      level.addBigCoin(172, 5);
       level.addEnemy('meiga', 150, 7);
       level.addBarrel(154, 3, { withOctopus: true });
       level.addEnemy('meiga', 160, 5);
       level.addStaircase(164, 4, 'up');
       level.addEnemy('caracol', 170);
-      level.addStaircase(174, 6, 'up');
-      level.setGoal(188);
+      // Sector final: hórreos-túnel, colinas con caracoles y pulpos de feria.
+      level.addTalker(177, ['ÚLTIMO TRAMO...\n¡CUIDADO CON LOS PULPOS DE FERIA!']);
+      level.addBarrel(180, 3, { withOctopus: true });
+      level.addEnemy('meiga', 184, 6);
+      level.addHill(187, 194, 2);
+      level.addEnemy('caracol', 191, 10);
+      level.addLedge(198, 9);
+      level.addCoinRow(199, 11, 7);
+      level.addEnemy('caracol', 202);
+      level.addQuestionBlock(201, 6, POWER_UP);
+      level.addBarrel(209, 2, { withOctopus: true });
+      level.addEnemy('meiga', 212, 5);
+      level.addHill(216, 222, 1);
+      level.addOneWayPlatform(224, 9, 3);
+      level.addCoinRow(224, 8, 3);
+      level.addStaircase(230, 6, 'up');
+      level.setGoal(240);
       return level.build();
     }
   },
@@ -5656,9 +6425,18 @@ const LEVELS = [
     musicName: 'flamenco',
     timeLimit: 400,
     build() {
-      const level = new LevelBuilder(198, 'valencia');
+      const level = new LevelBuilder(250, 'valencia');
       level.addGround(0, 50);
       level.addSign(3, 'MASCLETÀ');
+      level.addTalker(6, ['¡ES LA MASCLETÀ!\nTAPA LOS OÍDOS... O NO.', 'LOS PETARDOS CAEN DEL CIELO.\nNO ES UN MENÚ.']);
+      level.addTalker(13, ['¡UNA PAELLA CON CEBOLLA\nES UNA OFENSA!'], { look: 'bailaora' });
+      // Puerta de la falla: sala de pesetas.
+      level.addDoor({ column: 26, look: 'door', roomId: 'falla' });
+      level.addRoom('falla', createCoinRoom({
+        themeName: 'taberna',
+        bigCoinNumber: level.reserveBigCoin(),
+        lines: ['EL TALLER DE LA FALLA.\nTODO ESTO SE QUEMARÁ EL 19.', '¡NINOT INDULTAT!\n(EL TUYO, NO.)']
+      }));
       level.addQuestionBlock(10, 9, POWER_UP);
       level.addBricks(11, 9, 3);
       level.addEnemy('guiri', 16);
@@ -5685,6 +6463,9 @@ const LEVELS = [
       level.addEnemy('guiri', 94);
       level.addEnemy('madre', 98);
       level.addGround(104, 150);
+      // Desfile de ninots: los enemigos bailan y se vuelven inofensivos.
+      level.addTalker(105, ['ESA FLOR TIENE ALGO RARO...\n¡UN DESFILE DE NINOTS!']);
+      level.addWonder({ column: 106, kind: 'parade', endColumn: 146 });
       level.addQuestionBlock(108, 9);
       level.addQuestionBlock(109, 9, CHURROS);
       level.addQuestionBlock(110, 9);
@@ -5694,17 +6475,36 @@ const LEVELS = [
       level.addOneWayPlatform(118, 9, 3);
       level.addOneWayPlatform(122, 6, 3);
       level.addCoinRow(122, 5, 3);
+      level.addOneWayPlatform(127, 4, 2);
+      level.addBigCoin(128, 2);
       level.addEnemy('madre', 125);
       level.addBarrel(130, 2);
       level.addBarrel(136, 3);
       level.addEnemy('madre', 136, 9);
       level.addEnemy('cucavol', 142, 7);
-      level.addGround(154, 197);
+      level.addGround(154, 249);
       level.addEnemy('guiri', 160);
       level.addEnemy('guiri', 162);
       level.addEnemy('madre', 168);
-      level.addStaircase(172, 6, 'up');
-      level.setGoal(184);
+      // Sector final: la plaza de la cremà, con cornisas y torres de azulejos.
+      level.addTalker(173, ['¡LA CREMÀ SE ACERCA!\nCORRE HASTA LA META.']);
+      level.addFirecrackerZone(176, 226);
+      level.addLedge(178, 10);
+      level.addCoinRow(179, 11, 8);
+      level.addEnemy('cucaracha', 182);
+      level.addEnemy('madre', 186, 8);
+      level.addHill(192, 199, 2);
+      level.addEnemy('cucavol', 196, 6);
+      level.addAzulejoBlocks(204, 9, 1, 4);
+      level.addAzulejoBlocks(206, 11, 2, 2);
+      level.addEnemy('guiri', 209);
+      level.addEnemy('madre', 212);
+      level.addLedge(216, 8);
+      level.addCoinRow(217, 11, 6);
+      level.addEnemy('cucaracha', 219);
+      level.addBigCoin(220, 6);
+      level.addStaircase(228, 6, 'up');
+      level.setGoal(238);
       return level.build();
     }
   },
@@ -5714,15 +6514,25 @@ const LEVELS = [
     musicName: 'night',
     timeLimit: 400,
     build() {
-      const level = new LevelBuilder(198, 'mancha');
+      const level = new LevelBuilder(252, 'mancha');
       level.addGround(0, 33);
       level.addSign(3, 'EN UN LUGAR…');
+      level.addTalker(6, ['¡MOLINOS! ¡QUE NO, SANCHO,\nQUE NO SON GIGANTES!', 'SI LAS ASPAS TE DAN,\nTE DAN: SALTA.']);
+      // Alcantarilla secreta de la venta: sala de pruebas.
+      level.addDoor({ column: 22, look: 'manhole', roomId: 'venta' });
+      level.addRoom('venta', createChallengeRoom({
+        themeName: 'bodega',
+        bigCoinNumber: level.reserveBigCoin(),
+        lines: ['LA VENTA DEL TÍO PACO.\nSOLO SIRVEN VINO Y VALOR.', 'EN UN LUGAR DE LA MANCHA...\nHAY UN FOSO ENORME.']
+      }));
       level.addEnemy('oveja', 12);
       level.addEnemy('oveja', 14);
       level.addQuestionBlock(17, 9, POWER_UP);
       level.addEnemy('murcielago', 24, 6);
       level.addWindmill(30); // Sus aspas barren el hueco que viene después.
       level.addGround(37, 80);
+      level.addTalker(39, ['¡FORTUNA GUÍA NUESTROS PASOS,\nSANCHO AMIGO!'], { look: 'quijote' });
+      level.addTalker(41, ['¡PERO MI SEÑOR, SI ESTO ES UN\nPOLÍGONO INDUSTRIAL!'], { look: 'sancho' });
       level.addEnemy('oveja', 44);
       level.addBricks(50, 9, 3);
       level.addQuestionBlock(53, 9);
@@ -5739,6 +6549,8 @@ const LEVELS = [
       level.addWindmill(93);
       level.addOneWayPlatform(95, 9, 3);
       level.addCoinRow(95, 8, 3);
+      level.addOneWayPlatform(98, 6, 3);
+      level.addBigCoin(99, 4);
       level.addEnemy('oveja', 101);
       level.addEnemy('oveja', 103);
       level.addQuestionBlock(107, 9, POWER_UP);
@@ -5747,6 +6559,16 @@ const LEVELS = [
       level.addEnemy('toro', 118);
       level.addWindmill(123);
       level.addGround(129, 161);
+      // Luna llena: la gravedad se afloja y las plataformas del cielo se vuelven alcanzables.
+      level.addTalker(130, ['¡QUÉ LUNA, SANCHO!\nCREO QUE HOY PESAMOS MENOS.']);
+      level.addWonder({ column: 131, kind: 'moon', endColumn: 156 });
+      level.addOneWayPlatform(135, 8, 3);
+      level.addCoinRow(135, 7, 3);
+      level.addOneWayPlatform(140, 5, 3);
+      level.addCoinRow(140, 4, 3);
+      level.addOneWayPlatform(145, 2, 3);
+      level.addCoinRow(145, 1, 3);
+      level.addBigCoin(150, 1);
       level.addEnemy('murcielago', 132, 7);
       level.addEnemy('murcielago', 136, 5);
       level.addSign(138, 'QUE NO SON GIGANTES');
@@ -5755,11 +6577,25 @@ const LEVELS = [
       level.addWindmill(152);
       level.addQuestionBlock(154, 9, MULTI_COIN);
       level.addStaircase(158, 4, 'up');
-      level.addGround(164, 197);
+      level.addGround(164, 251);
       level.addStaircase(164, 4, 'down');
       level.addEnemy('murcielago', 172, 6);
-      level.addStaircase(176, 5, 'up');
-      level.setGoal(186);
+      // Sector final: molinos, cerros y una venta con pasillo.
+      level.addWindmill(178);
+      level.addEnemy('oveja', 184);
+      level.addEnemy('oveja', 186);
+      level.addHill(190, 197, 2);
+      level.addEnemy('murcielago', 194, 6);
+      level.addLedge(201, 10);
+      level.addCoinRow(202, 11, 8);
+      level.addEnemy('oveja', 205);
+      level.addQuestionBlock(206, 6, POWER_UP);
+      level.addEnemy('toro', 214);
+      level.addWindmill(218);
+      level.addOneWayPlatform(222, 9, 3);
+      level.addCoinRow(222, 8, 3);
+      level.addStaircase(232, 5, 'up');
+      level.setGoal(242);
       return level.build();
     }
   },
@@ -5769,9 +6605,17 @@ const LEVELS = [
     musicName: 'playa',
     timeLimit: 400,
     build() {
-      const level = new LevelBuilder(200, 'canarias');
+      const level = new LevelBuilder(252, 'canarias');
       level.addGround(0, 20);
       level.addSign(3, 'CHACHO');
+      level.addTalker(6, ['CHACHO, QUE ESTO ES UN VOLCÁN...\nPERO SIN ESTRÉS.', 'LA LAVA QUEMA.\nEL GOFIO, ENGORDA.']);
+      // Puerta de la cueva: sala de cristales.
+      level.addDoor({ column: 38, look: 'door', roomId: 'cueva' });
+      level.addRoom('cueva', createCoinRoom({
+        themeName: 'gruta',
+        bigCoinNumber: level.reserveBigCoin(),
+        lines: ['LA CUEVA DE LOS GUANCHES.\nSHHH... ESTÁN DURMIENDO.', 'ESTOS CRISTALES NO SE VENDEN.\nPERO SE ADMIRAN.']
+      }));
       level.addQuestionBlock(8, 9, POWER_UP);
       level.addEnemy('lagarto', 14);
       level.addLavaBubble(22);
@@ -5782,6 +6626,8 @@ const LEVELS = [
       // Plataforma que sube y baja, y un roque volcánico en mitad de la lava.
       level.addMovingPlatform({ column: 41, row: 11, lengthInTiles: 3, axis: 'vertical', travelInTiles: -3, speed: 0.6 });
       level.addGround(46, 48, 9);
+      level.addOneWayPlatform(47, 6, 3);
+      level.addBigCoin(48, 4);
       level.addLavaBubble(44);
       level.addLavaBubble(49);
       level.addGround(51, 65);
@@ -5798,6 +6644,22 @@ const LEVELS = [
       level.addMovingPlatform({ column: 91, row: 10, lengthInTiles: 3, axis: 'horizontal', travelInTiles: 11, speed: 1.1 });
       level.addLavaBubble(98);
       level.addGround(105, 124);
+      // Maravilla al compás sobre la lava: plataformas que laten con el volcán.
+      level.addTalker(106, ['EL VOLCÁN TIENE RITMO.\n¡TOCA LA FLOR Y BAILA!']);
+      level.addWonder({ column: 107, kind: 'rhythm', endColumn: 146 });
+      level.addBeatPlatforms(113, 8, 3, 'A');
+      level.addBeatPlatforms(117, 8, 3, 'B');
+      level.addCoinRow(113, 7, 3);
+      level.addCoinRow(117, 7, 3);
+      level.addBeatPlatforms(125, 10, 2, 'A');
+      level.addBeatPlatforms(127, 10, 2, 'B');
+      level.addBeatPlatforms(133, 8, 3, 'A');
+      level.addBeatPlatforms(137, 8, 3, 'B');
+      level.addCoinRow(133, 7, 3);
+      level.addCoinRow(137, 7, 3);
+      level.addBeatPlatforms(141, 6, 3, 'A');
+      level.addBeatPlatforms(145, 6, 3, 'B');
+      level.addBigCoin(146, 4);
       level.addQuestionBlock(108, 9, POWER_UP);
       level.addQuestionBlock(109, 9);
       level.addEnemy('lagarto', 112);
@@ -5815,11 +6677,27 @@ const LEVELS = [
       level.addMovingPlatform({ column: 151, row: 10, lengthInTiles: 3, axis: 'horizontal', travelInTiles: 7, speed: 1 });
       level.addLavaBubble(154);
       level.addLavaBubble(158);
-      level.addGround(161, 199);
+      level.addGround(161, 185);
       level.addEnemy('lagarto', 166);
       level.addEnemy('murcielago', 170, 6);
-      level.addStaircase(174, 6, 'up');
-      level.setGoal(186);
+      // Sector final: último foso de lava, cornisas de roca y colinas volcánicas.
+      level.addTalker(176, ['EL ÚLTIMO SALTO:\nLA LAVA NO PERDONA, CHACHO.']);
+      level.addHill(178, 183, 2);
+      level.addLavaBubble(188);
+      level.addMovingPlatform({ column: 186, row: 10, lengthInTiles: 3, axis: 'horizontal', travelInTiles: 3, speed: 1 });
+      level.addGround(192, 251);
+      level.addLedge(196, 9);
+      level.addCoinRow(197, 11, 7);
+      level.addEnemy('lagarto', 200);
+      level.addQuestionBlock(199, 6, CHURROS);
+      level.addEnemy('murcielago', 203, 6);
+      level.addHill(208, 215, 2);
+      level.addEnemy('lagarto', 211, 10);
+      level.addOneWayPlatform(220, 9, 3);
+      level.addOneWayPlatform(224, 7, 3);
+      level.addCoinRow(224, 6, 3);
+      level.addStaircase(232, 6, 'up');
+      level.setGoal(242);
       return level.build();
     }
   },
@@ -5833,6 +6711,15 @@ const LEVELS = [
       level.addCeiling(0, 161);
       level.addGround(0, 18);
       level.addSign(3, 'BORRADOR DE LA RENTA');
+      level.addTalker(6, ['AQUÍ SE DECLARA TODO...\nINCLUSO LAS FLORES.', 'EL FISCO NO PERDONA.\nPERO LA TIENDA DE ABAJO, SÍ.']);
+      // Alcantarilla del archivo: la tienda de premios antes del jefe.
+      level.addDoor({ column: 14, look: 'manhole', roomId: 'archivo' });
+      level.addRoom('archivo', createShopRoom({
+        themeName: 'bodega',
+        bigCoinNumber: level.reserveBigCoin(),
+        lines: ['EL ARCHIVO SECRETO.\nAQUÍ SE GUARDAN LAS DEDUCCIONES.', 'COGE LO QUE NECESITES.\nTE VA A HACER FALTA.'],
+        contents: [POWER_UP, CHURROS, POWER_UP]
+      }));
       level.addQuestionBlock(10, 9, POWER_UP);
       level.addLavaBubble(20);
       level.addGround(23, 40);
@@ -5840,6 +6727,8 @@ const LEVELS = [
       level.addFireBar(28, 9, 6, 0.04);
       level.addEnemy('ejecutivo', 34);
       level.addEnemy('ejecutivo', 36);
+      level.addOneWayPlatform(33, 7, 3);
+      level.addBigCoin(34, 5);
       level.addMovingPlatform({ column: 41, row: 10, lengthInTiles: 2, axis: 'horizontal', travelInTiles: 4, speed: 0.9 });
       level.addLavaBubble(43);
       level.addGround(47, 70);
@@ -5848,11 +6737,16 @@ const LEVELS = [
       level.addEnemy('ejecutivo', 58);
       level.addAzulejoBlocks(62, 11, 1, 2);
       level.addFireBar(62, 11, 5, 0.05);
+      level.addOneWayPlatform(64, 7, 3);
+      level.addBigCoin(65, 5);
       level.setCheckpoint(66);
       level.addMovingPlatform({ column: 71, row: 10, lengthInTiles: 3, axis: 'horizontal', travelInTiles: 5, speed: 1 });
       level.addLavaBubble(73);
       level.addLavaBubble(77);
       level.addGround(79, 110);
+      // Devolución de Hacienda: llueven pesetas (por una vez, sin letra pequeña).
+      level.addTalker(80, ['¡DEVOLUCIÓN DE HACIENDA!\nPOR UNA VEZ, EL DINERO VUELVE.']);
+      level.addWonder({ column: 81, kind: 'rain', endColumn: 106 });
       level.addAzulejoBlocks(84, 9);
       level.addFireBar(84, 9, 6, 0.035);
       level.addAzulejoBlocks(92, 9);
@@ -5890,6 +6784,8 @@ const { GAME_RULES } = __module_src_config_constants_js;
 
 class GameSession {
   constructor() {
+    /** Truco del cocinero descubierto (se conserva entre partidas). */
+    this.chefMode = false;
     this.startNewGame(0);
   }
 
@@ -5906,6 +6802,47 @@ class GameSession {
     this.hasReachedCheckpoint = false;
     /** Poder con el que Paco empezará el siguiente nivel (se conserva al superar uno). */
     this.carriedPowerLevel = 0;
+    /** Semillas Maravilla conseguidas (índices de nivel). */
+    this.seeds = new Set();
+    /** Monedas gigantes conseguidas, con clave "nivel:número". */
+    this.bigCoins = new Set();
+  }
+
+  /**
+   * Anota la Semilla Maravilla de un nivel.
+   * @param {number} levelIndex
+   * @returns {boolean} true si es la primera vez que se consigue.
+   */
+  collectSeed(levelIndex) {
+    const isNew = !this.seeds.has(levelIndex);
+    this.seeds.add(levelIndex);
+    this.score += 2000;
+    return isNew;
+  }
+
+  /**
+   * Anota una moneda gigante.
+   * @param {number} levelIndex
+   * @param {number} coinNumber
+   * @returns {boolean} true si es la primera vez que se consigue.
+   */
+  collectBigCoin(levelIndex, coinNumber) {
+    const key = `${levelIndex}:${coinNumber}`;
+    const isNew = !this.bigCoins.has(key);
+    this.bigCoins.add(key);
+    this.score += 500;
+    return isNew;
+  }
+
+  /**
+   * Monedas gigantes conseguidas en un nivel.
+   * @param {number} levelIndex
+   * @returns {number}
+   */
+  countBigCoinsInLevel(levelIndex) {
+    let count = 0;
+    for (const key of this.bigCoins) if (key.startsWith(`${levelIndex}:`)) count++;
+    return count;
   }
 
   /** @param {number} points */
@@ -7319,6 +8256,115 @@ const CITY_PAINTERS = {
       near.fillStyle = '#6a625a'; near.fillRect(x + 97, 124, 9, 5);
     }
     haze(near, GY - 40, GY, '#05030a', 0, 0.55);
+  },
+
+  /** Taberna: paredes de madera, estantes de botellas, jamones colgando y lámparas cálidas. */
+  taberna({ far, mid, near }, random) {
+    far.fillStyle = linearGradient(far, 0, 0, 0, 240, [[0, '#24120a'], [1, '#4a2a16']]);
+    far.fillRect(0, 0, W, 240);
+    for (let x = 0; x < W; x += 16) {
+      far.fillStyle = (x / 16) % 2 ? '#5a361c' : '#4e2e18';
+      far.fillRect(x, 30, 15.4, 190);
+      far.fillStyle = 'rgba(255,200,140,0.07)'; far.fillRect(x + 1, 30, 2, 190);
+      far.strokeStyle = 'rgba(20,8,0,0.35)'; far.lineWidth = 0.4; far.beginPath(); far.moveTo(x + 6, 40); far.bezierCurveTo(x + 8, 90, x + 4, 140, x + 7, 210); far.stroke();
+    }
+    // Estantes con botellas de colores.
+    for (let x = 6; x < W; x += 128) {
+      wrapDraw(mid, x, 100, px => {
+        for (const shelfY of [70, 100, 130]) {
+          mid.fillStyle = '#2a1608'; mid.fillRect(px, shelfY, 96, 3);
+          mid.fillStyle = 'rgba(255,255,255,0.15)'; mid.fillRect(px, shelfY, 96, 0.8);
+          for (let bottle = 0; bottle < 12; bottle++) {
+            const color = pick(['#2c9c3c', '#a8322c', '#e8b848', '#3a6ae0', '#ffffff'], random);
+            const bx = px + 3 + bottle * 7.8;
+            mid.fillStyle = color; roundedRect(mid, bx, shelfY - 14, 4.2, 14, 1.4); mid.fill();
+            mid.fillRect(bx + 1.2, shelfY - 18, 1.8, 5);
+            mid.fillStyle = 'rgba(255,255,255,0.45)'; mid.fillRect(bx + 0.7, shelfY - 12, 0.9, 9);
+          }
+        }
+      });
+    }
+    // Jamones colgados y farolas.
+    for (let x = 60; x < W; x += 96) {
+      near.strokeStyle = '#2a1608'; near.lineWidth = 0.7; near.beginPath(); near.moveTo(x, 30); near.lineTo(x, 56); near.stroke();
+      near.beginPath(); near.moveTo(x - 4, 56); near.quadraticCurveTo(x - 7, 70, x - 2, 80); near.quadraticCurveTo(x + 5, 84, x + 6, 66); near.quadraticCurveTo(x + 4, 54, x - 4, 56);
+      near.fillStyle = linearGradient(near, x - 6, 56, x + 6, 84, [[0, '#d8545a'], [1, '#6a1218']]); near.fill(); strokeSoft(near, '#6a1218', 0.8, -0.5);
+      near.fillStyle = '#ffe8d8'; near.beginPath(); near.ellipse(x - 1, 74, 1.6, 2.6, 0.3, 0, TAU); near.fill();
+    }
+    for (let x = 30; x < W; x += 128) {
+      near.strokeStyle = '#2a1608'; near.lineWidth = 0.7; near.beginPath(); near.moveTo(x, 20); near.lineTo(x, 44); near.stroke();
+      near.beginPath(); near.moveTo(x - 9, 56); near.lineTo(x + 9, 56); near.lineTo(x + 4, 44); near.lineTo(x - 4, 44); near.closePath();
+      near.fillStyle = '#d83a2a'; near.fill(); strokeSoft(near, '#d83a2a', 0.8, -0.6);
+      glow(near, x, 62, 56, '#ffc070', 0.7);
+      near.fillStyle = '#fff2b0'; near.beginPath(); near.ellipse(x, 57, 5, 2, 0, 0, TAU); near.fill();
+    }
+    // Barra del fondo con taburetes.
+    for (let x = 0; x < W; x += 128) {
+      near.fillStyle = linearGradient(near, 0, GY - 34, 0, GY, [[0, '#7a4a28'], [1, '#3a2010']]); near.fillRect(x + 24, GY - 34, 80, 34);
+      near.fillStyle = '#c8905a'; near.fillRect(x + 22, GY - 37, 84, 4);
+      near.fillStyle = 'rgba(255,255,255,0.25)'; near.fillRect(x + 22, GY - 37, 84, 1);
+    }
+    haze(near, GY - 30, GY, '#1a0a04', 0, 0.45);
+  },
+
+  /** Bodega: arcos de piedra, hileras de toneles y faroles. */
+  bodega({ far, mid, near }) {
+    far.fillStyle = linearGradient(far, 0, 0, 0, 240, [[0, '#120818'], [1, '#2a1838']]);
+    far.fillRect(0, 0, W, 240);
+    for (let x = 0; x < W; x += 64) {
+      far.fillStyle = '#1a0e24'; far.beginPath(); far.moveTo(x + 4, GY); far.lineTo(x + 4, 90); far.arc(x + 32, 90, 28, Math.PI, 0); far.lineTo(x + 60, GY); far.closePath(); far.fill();
+      strokeSoft(far, '#5a4a70', 1, 0.1);
+    }
+    for (let x = 0; x < W; x += 80) {
+      wrapDraw(mid, x, 76, px => {
+        const barrel = (bx, by, scale) => {
+          mid.fillStyle = linearGradient(mid, bx - 14 * scale, 0, bx + 14 * scale, 0, [[0, '#9a5a2a'], [0.5, '#c88040'], [1, '#5a3014']]);
+          mid.beginPath(); mid.ellipse(bx, by, 14 * scale, 18 * scale, 0, 0, TAU); mid.fill(); strokeSoft(mid, '#5a3014', 1, -0.5);
+          mid.strokeStyle = '#8a8e98'; mid.lineWidth = 1.2; for (const t of [-0.5, 0.5]) { mid.beginPath(); mid.ellipse(bx, by + t * 10 * scale, 14 * scale, 3 * scale, 0, 0, Math.PI); mid.stroke(); }
+          mid.fillStyle = '#d8b060'; mid.beginPath(); mid.arc(bx, by + 4 * scale, 2.2 * scale, 0, TAU); mid.fill();
+        };
+        barrel(px + 20, GY - 20, 1); barrel(px + 52, GY - 20, 1); barrel(px + 36, GY - 52, 0.9);
+      });
+    }
+    for (let x = 30; x < W; x += 128) {
+      near.strokeStyle = '#2a2030'; near.lineWidth = 0.8; near.beginPath(); near.moveTo(x, 30); near.lineTo(x, 74); near.stroke();
+      near.fillStyle = '#ffd070'; roundedRect(near, x - 5, 74, 10, 14, 3); near.fill(); strokeSoft(near, '#2a2030', 1, 0);
+      glow(near, x, 82, 58, '#ffb050', 0.7);
+    }
+    haze(near, GY - 36, GY, '#0a0412', 0, 0.5);
+  },
+
+  /** Gruta de cristales: cuevas azules con cristales brillantes y setas luminosas. */
+  gruta({ far, mid, near }, random) {
+    far.fillStyle = linearGradient(far, 0, 0, 0, 240, [[0, '#02101a'], [1, '#0a3040']]);
+    far.fillRect(0, 0, W, 240);
+    for (let s = 0; s < 40; s++) { const x = random() * W; const y = random() * 190; far.fillStyle = 'rgba(160,255,240,0.5)'; far.beginPath(); far.arc(x, y, 0.5 + random() * 0.8, 0, TAU); far.fill(); }
+    ridge(far, { baseY: 50, amplitude: 22, periods: 4, phase: 0.6, fill: '#06202c', bottom: 0 });
+    const crystalColors = [['#7affea', '#1a8a9a'], ['#ff8aef', '#9a2a8a'], ['#8ab0ff', '#2a3aa8']];
+    for (let x = 12; x < W; x += 54) {
+      wrapDraw(mid, x, 40, px => {
+        const [light, dark] = pick(crystalColors, random);
+        for (let c = 0; c < 4; c++) {
+          const cx = px + c * 7 + random() * 3; const h = 22 + random() * 30; const w = 6 + random() * 4; const lean = (random() - 0.5) * 6;
+          polygon(mid, [[cx, GY], [cx + w, GY], [cx + w / 2 + lean, GY - h]], linearGradient(mid, cx, GY - h, cx + w, GY, [[0, light], [1, dark]]), -0.5);
+          mid.fillStyle = 'rgba(255,255,255,0.4)'; mid.beginPath(); mid.moveTo(cx + w * 0.35, GY - h * 0.2); mid.lineTo(cx + w / 2 + lean, GY - h); mid.lineTo(cx + w * 0.5, GY - h * 0.2); mid.closePath(); mid.fill();
+        }
+        glow(mid, px + 14, GY - 24, 44, light, 0.5);
+      });
+    }
+    // Estalactitas y setas luminosas.
+    for (let x = 6; x < W; x += 22) {
+      const h = 14 + random() * 36;
+      polygon(near, [[x, 0], [x + 12, 0], [x + 6, h]], linearGradient(near, 0, 0, 0, h, [[0, '#0a2634'], [1, '#2a6a80']]), -0.5);
+    }
+    for (let x = 30; x < W; x += 90) {
+      wrapDraw(near, x, 20, px => {
+        near.fillStyle = '#e8f8ff'; near.fillRect(px + 4, GY - 12, 3, 12);
+        near.fillStyle = linearGradient(near, 0, GY - 20, 0, GY - 10, [[0, '#7affea'], [1, '#1a8a9a']]); near.beginPath(); near.ellipse(px + 5.5, GY - 12, 9, 6, 0, Math.PI, 0); near.fill(); strokeSoft(near, '#1a8a9a', 0.8, -0.5);
+        glow(near, px + 5.5, GY - 14, 34, '#7affea', 0.6);
+      });
+    }
+    haze(near, GY - 30, GY, '#02141c', 0, 0.45);
   }
 };
 return { CITY_PAINTERS };
@@ -7508,7 +8554,21 @@ const GAMEPLAY_MESSAGES = Object.freeze({
   brickTooHard: '¡NO PUEDOR!',
   bossIntro: 'DON HACIENDA: ¡PAGUE SUS IMPUESTOS!',
   bossDefeated: '¡ME VUELVO A SUIZA!',
-  recipeRecovered: '¡HAS RECUPERADO LA RECETA!'
+  recipeRecovered: '¡HAS RECUPERADO LA RECETA!',
+  /** Cartel al activar cada tipo de Flor Maravilla. */
+  wonderBanner: Object.freeze({
+    moon: '¡MARAVILLA! ¡LUNA!',
+    rain: '¡MARAVILLA! ¡LLUEVEN PESETAS!',
+    rhythm: '¡MARAVILLA! ¡AL COMPÁS!',
+    dark: '¡MARAVILLA! ¡SE FUNDIERON LOS PLOMOS!',
+    stampede: '¡MARAVILLA! ¡ENCIERRO!',
+    parade: '¡MARAVILLA! ¡DESFILE!',
+    default: '¡MARAVILLA!'
+  }),
+  wonderSeedAppears: '¡UNA SEMILLA MARAVILLA!',
+  seedCollected: '¡SEMILLA MARAVILLA!',
+  bigCoinCollected: '¡MONEDA GIGANTE!',
+  secretRoom: '¡SALA SECRETA!'
 });
 
 /** Historia que se cuenta al empezar una partida nueva. */
@@ -7956,6 +9016,10 @@ class Player extends Entity {
     this.walkAnimationProgress = 0;
     /** Aplastamiento al aterrizar (0 = normal); se recupera solo con el tiempo. */
     this.landingSquash = 0;
+    /** Multiplicador de la gravedad (la maravilla lunar lo reduce). */
+    this.gravityScale = 1;
+    /** Truco del cocinero: Paco lleva gorro de chef. */
+    this.isChef = false;
     /** Estiramiento al despegar (0 = normal). */
     this.takeOffStretch = 0;
     /** Últimas posiciones, para dibujar la estela al correr. */
@@ -8147,8 +9211,9 @@ class Player extends Entity {
       soundEngine.playSoundEffect(this.isBig ? SOUND_EFFECT.JUMP_BIG : SOUND_EFFECT.JUMP_SMALL);
     }
     const isRisingWithJumpHeld = this.velocityY < 0 && controls.jumpHeld;
-    this.velocityY += isRisingWithJumpHeld ? PLAYER_PHYSICS.gravityWhileHoldingJump : PLAYER_PHYSICS.gravity;
-    if (this.velocityY > PLAYER_PHYSICS.maxFallSpeed) this.velocityY = PLAYER_PHYSICS.maxFallSpeed;
+    this.velocityY += (isRisingWithJumpHeld ? PLAYER_PHYSICS.gravityWhileHoldingJump : PLAYER_PHYSICS.gravity) * this.gravityScale;
+    const maxFallSpeed = PLAYER_PHYSICS.maxFallSpeed * (this.gravityScale < 1 ? 0.55 : 1);
+    if (this.velocityY > maxFallSpeed) this.velocityY = maxFallSpeed;
   }
 
   /** @private Lanza un pimiento picante si tiene el poder y no hay demasiados en pantalla. */
@@ -8288,7 +9353,8 @@ class Player extends Entity {
   /** @private Elige los colores: parpadeo de churros, verde picante o normal. */
   chooseColorVariant() {
     if (this.isInvincible) return SUGAR_RUSH_COLOR_CYCLE[(this.ageInSteps >> 2) % SUGAR_RUSH_COLOR_CYCLE.length];
-    return this.powerLevel === POWER_LEVEL.SPICY ? 'spicy' : 'normal';
+    if (this.powerLevel === POWER_LEVEL.SPICY) return 'spicy';
+    return this.isChef ? 'chef' : 'normal';
   }
 
   /**
@@ -8931,6 +9997,63 @@ class TaxInvoice extends Entity {
 return { TaxInvoice };
 })();
 
+// ─── src/entities/wonder/FallingCoin.js ───
+const __module_src_entities_wonder_FallingCoin_js = (() => {
+/**
+ * @file Peseta que cae del cielo durante la maravilla "lluvia de pesetas".
+ */
+const { Entity } = __module_src_entities_Entity_js;
+const { SPRITES, drawSprite } = __module_src_graphics_sprites_js;
+const { addGlow } = __module_src_graphics_shapes_js;
+const { isSolidTile } = __module_src_world_tileTypes_js;
+const { TILE_SIZE, SCREEN_HEIGHT } = __module_src_config_constants_js;
+
+const FALL_SPEED = 1.5;
+const COIN_FRAMES = [0, 1, 2, 1];
+
+class FallingCoin extends Entity {
+  /**
+   * @param {number} x Centro horizontal.
+   * @param {number} y Altura inicial (arriba de la pantalla).
+   */
+  constructor(x, y) {
+    super(x - 6, y, 12, 12);
+    this.velocityY = FALL_SPEED;
+    /** Ilumina un poco a su alrededor en los apagones. */
+    this.isWonderLight = true;
+  }
+
+  /** @param {import('../../game/World.js').World} world */
+  update(world) {
+    this.ageInSteps++;
+    this.y += this.velocityY;
+    const row = Math.floor((this.y + this.height) / TILE_SIZE);
+    const column = Math.floor(this.centerX / TILE_SIZE);
+    if (isSolidTile(world.tileMap.getTile(column, row)) || this.y > SCREEN_HEIGHT) this.shouldBeRemoved = true;
+  }
+
+  /** @param {import('../../game/World.js').World} world */
+  onPlayerContact(player, world) {
+    if (this.shouldBeRemoved) return;
+    this.shouldBeRemoved = true;
+    world.collectCoin();
+    world.spawnSparkle(this.centerX, this.centerY);
+  }
+
+  /**
+   * @param {CanvasRenderingContext2D} context
+   * @param {number} cameraX
+   */
+  draw(context, cameraX) {
+    const frame = COIN_FRAMES[(this.ageInSteps >> 3) % COIN_FRAMES.length];
+    const x = this.centerX - cameraX;
+    addGlow(context, x, this.centerY, 12, '255, 214, 90', 0.5);
+    drawSprite(context, SPRITES[`peseta_spin${frame}`], x - 8, this.centerY - 7);
+  }
+}
+return { FallingCoin };
+})();
+
 // ─── src/entities/enemies/enemyCatalog.js ───
 const __module_src_entities_enemies_enemyCatalog_js = (() => {
 /**
@@ -9174,7 +10297,15 @@ class Enemy extends Entity {
    */
   drawCenteredSprite(context, spriteName, cameraX, { mirrored = false, offsetX = 0 } = {}) {
     const sprite = SPRITES[spriteName];
-    drawSprite(context, sprite, this.centerX - sprite.width / 2 - cameraX + offsetX, this.bottom - sprite.height, { mirrored, upsideDown: this.isKnockedOut });
+    // En el desfile de la maravilla, los enemigos bailan: botan y se estiran al ritmo.
+    const beat = this.isDancing ? Math.sin(this.ageInSteps / 5) : 0;
+    const danceOffset = this.isDancing ? -Math.abs(beat) * 3 : 0;
+    drawSprite(context, sprite, this.centerX - sprite.width / 2 - cameraX + offsetX, this.bottom - sprite.height + danceOffset, {
+      mirrored: mirrored !== (this.isDancing && beat > 0.6),
+      upsideDown: this.isKnockedOut,
+      scaleX: this.isDancing ? 1.15 - Math.abs(beat) * 0.15 : 1,
+      scaleY: this.isDancing ? 1 + Math.abs(beat) * 0.15 : 1
+    });
   }
 
   /**
@@ -10501,6 +11632,344 @@ class MovingPlatform extends Entity {
 return { MovingPlatform };
 })();
 
+// ─── src/entities/wonder/WonderFlower.js ───
+const __module_src_entities_wonder_WonderFlower_js = (() => {
+/**
+ * @file Flor Maravilla: al tocarla, el nivel se transforma durante un tramo
+ * (gravedad lunar, lluvia de pesetas, plataformas al ritmo, apagón, estampida
+ * de toros o desfile). Al terminar el tramo aparece la Semilla Maravilla.
+ */
+const { TILE_SIZE } = __module_src_config_constants_js;
+const { Entity } = __module_src_entities_Entity_js;
+const { addGlow, outlinedCircle } = __module_src_graphics_shapes_js;
+const { OUTLINE_COLOR } = __module_src_graphics_hd_js;
+const { eye, mouth } = __module_src_graphics_creatureKit_js;
+
+const PETAL_COUNT = 8;
+const PETAL_COLORS = [['#ff7ad8', '#b02aa0'], ['#7ad8ff', '#2a6ad8'], ['#ffe45a', '#e08a1c'], ['#9aff8a', '#2a9a4a']];
+
+class WonderFlower extends Entity {
+  /**
+   * @param {number} column
+   * @param {number} row Fila que pisa.
+   * @param {{eventKind: string, endColumn: number}} settings
+   */
+  constructor(column, row, settings) {
+    super(column * TILE_SIZE + 1, (row + 1) * TILE_SIZE - 15, 14, 14);
+    this.eventKind = settings.eventKind;
+    this.endColumn = settings.endColumn;
+    /** Ilumina un poco a su alrededor en los apagones. */
+    this.isWonderLight = true;
+  }
+
+  /** @param {import('../../game/World.js').World} world */
+  update(world) {
+    this.ageInSteps++;
+    if (this.ageInSteps % 18 === 0) world.spawnSparkle(this.centerX + (Math.random() - 0.5) * 22, this.centerY + (Math.random() - 0.5) * 22);
+  }
+
+  /** @param {import('../../game/World.js').World} world */
+  onPlayerContact(player, world) {
+    if (this.shouldBeRemoved) return;
+    this.shouldBeRemoved = true;
+    world.triggerWonder(this);
+  }
+
+  /**
+   * @param {CanvasRenderingContext2D} context
+   * @param {number} cameraX
+   */
+  draw(context, cameraX) {
+    const x = this.centerX - cameraX;
+    const bob = Math.sin(this.ageInSteps / 14) * 1.2;
+    const y = this.centerY + bob;
+    const pulse = 0.5 + 0.5 * Math.sin(this.ageInSteps / 9);
+    addGlow(context, x, y, 26 + pulse * 6, '255, 150, 255', 0.5);
+    // Tallo.
+    context.strokeStyle = OUTLINE_COLOR; context.lineWidth = 3; context.lineCap = 'round';
+    context.beginPath(); context.moveTo(x, y + 5); context.quadraticCurveTo(x + 1.5, y + 9, x, this.bottom); context.stroke();
+    context.strokeStyle = '#3ac85a'; context.lineWidth = 1.8;
+    context.beginPath(); context.moveTo(x, y + 5); context.quadraticCurveTo(x + 1.5, y + 9, x, this.bottom); context.stroke();
+    // Pétalos de colores que giran.
+    context.save();
+    context.translate(x, y);
+    context.rotate(this.ageInSteps / 40);
+    for (let petal = 0; petal < PETAL_COUNT; petal++) {
+      const [light, dark] = PETAL_COLORS[petal % PETAL_COLORS.length];
+      context.save();
+      context.rotate(petal * Math.PI * 2 / PETAL_COUNT);
+      context.beginPath(); context.ellipse(0, -6.2, 3, 4.4, 0, 0, Math.PI * 2);
+      const gradient = context.createLinearGradient(0, -10, 0, -2);
+      gradient.addColorStop(0, light); gradient.addColorStop(1, dark);
+      context.fillStyle = gradient; context.fill();
+      context.strokeStyle = OUTLINE_COLOR; context.lineWidth = 0.7; context.stroke();
+      context.restore();
+    }
+    context.restore();
+    // Cara sonriente en el centro.
+    outlinedCircle(context, x, y, 4.2, '#fff6a8', '#ffb02a', 0.8);
+    eye(context, x - 1.5, y - 0.6, 0.95, { lookX: 0, lookY: 0.2 }); eye(context, x + 1.5, y - 0.6, 0.95, { lookX: 0, lookY: 0.2 });
+    mouth(context, x, y + 1.8, 2, 'smile');
+  }
+}
+return { WonderFlower };
+})();
+
+// ─── src/entities/wonder/BigCoin.js ───
+const __module_src_entities_wonder_BigCoin_js = (() => {
+/**
+ * @file Moneda gigante escondida (tres por nivel). Se guarda en la partida.
+ */
+const { TILE_SIZE } = __module_src_config_constants_js;
+const { Entity } = __module_src_entities_Entity_js;
+const { addGlow } = __module_src_graphics_shapes_js;
+const { OUTLINE_COLOR } = __module_src_graphics_hd_js;
+const { shadedEllipse, sheen } = __module_src_graphics_creatureKit_js;
+
+class BigCoin extends Entity {
+  /**
+   * @param {number} column
+   * @param {number} row
+   * @param {{number: number}} settings Número de la moneda dentro del nivel.
+   */
+  constructor(column, row, settings) {
+    super(column * TILE_SIZE, row * TILE_SIZE, 16, 16);
+    this.coinNumber = settings.number;
+    /** Ilumina un poco a su alrededor en los apagones. */
+    this.isWonderLight = true;
+  }
+
+  update() {
+    this.ageInSteps++;
+  }
+
+  /** @param {import('../../game/World.js').World} world */
+  onPlayerContact(player, world) {
+    if (this.shouldBeRemoved) return;
+    this.shouldBeRemoved = true;
+    world.collectBigCoin(this);
+  }
+
+  /**
+   * @param {CanvasRenderingContext2D} context
+   * @param {number} cameraX
+   * @param {boolean} [alreadyOwned] Si ya se consiguió, se dibuja apagada.
+   */
+  draw(context, cameraX) {
+    const x = this.centerX - cameraX;
+    const y = this.centerY + Math.sin(this.ageInSteps / 16) * 1.6;
+    const spin = Math.abs(Math.cos(this.ageInSteps / 22)) * 0.85 + 0.15;
+    addGlow(context, x, y, 22, '255, 120, 230', 0.55);
+    context.save();
+    context.translate(x, y);
+    context.scale(spin, 1);
+    shadedEllipse(context, 0, 0, 7.6, 7.6, '#e85adc', { light: '#ffc0f4', dark: '#8a1a82' });
+    context.strokeStyle = OUTLINE_COLOR; context.lineWidth = 0.9; context.beginPath(); context.arc(0, 0, 7.6, 0, Math.PI * 2); context.stroke();
+    context.strokeStyle = '#ffe0fa'; context.lineWidth = 0.7; context.beginPath(); context.arc(0, 0, 5.6, 0, Math.PI * 2); context.stroke();
+    context.fillStyle = '#ffe0fa';
+    context.beginPath();
+    for (let point = 0; point < 10; point++) { const radius = point % 2 ? 1.7 : 4; const angle = -Math.PI / 2 + point * Math.PI / 5; context.lineTo(Math.cos(angle) * radius, Math.sin(angle) * radius); }
+    context.closePath(); context.fill();
+    sheen(context, -3, -3.6, 2, 0.9, -0.6, 0.7);
+    context.restore();
+  }
+}
+return { BigCoin };
+})();
+
+// ─── src/entities/wonder/Talker.js ───
+const __module_src_entities_wonder_Talker_js = (() => {
+/**
+ * @file Personaje que charla cuando Paco se acerca: flores cotillas con
+ * consejos y chistes, y cameos escondidos por los niveles.
+ */
+const { TILE_SIZE } = __module_src_config_constants_js;
+const { Entity } = __module_src_entities_Entity_js;
+const { SPRITES, drawSprite } = __module_src_graphics_sprites_js;
+const { drawText, measureTextWidth } = __module_src_graphics_font_js;
+const { OUTLINE_COLOR } = __module_src_graphics_hd_js;
+const { roundedPath, outlinedCircle } = __module_src_graphics_shapes_js;
+const { soundEngine, SOUND_EFFECT } = __module_src_audio_soundEngine_js;
+const { eye, mouth } = __module_src_graphics_creatureKit_js;
+
+/** Distancia (px) a la que empieza a hablar. */
+const TALK_DISTANCE = 52;
+/** Letras que escribe por paso. */
+const LETTERS_PER_STEP = 0.55;
+
+class Talker extends Entity {
+  /**
+   * @param {number} column
+   * @param {number} row
+   * @param {{lines: string[], look: string}} settings
+   */
+  constructor(column, row, settings) {
+    super(column * TILE_SIZE, (row + 1) * TILE_SIZE - 16, 16, 16);
+    this.lines = settings.lines;
+    this.look = settings.look;
+    this.lineIndex = 0;
+    this.talkProgress = 0;
+    this.isPlayerNear = false;
+  }
+
+  /** @param {import('../../game/World.js').World} world */
+  update(world) {
+    this.ageInSteps++;
+    const isNear = Math.abs(world.player.centerX - this.centerX) < TALK_DISTANCE && Math.abs(world.player.centerY - this.centerY) < 48;
+    if (isNear && !this.isPlayerNear) this.talkProgress = 0;
+    if (!isNear && this.isPlayerNear) this.lineIndex = (this.lineIndex + 1) % this.lines.length;
+    this.isPlayerNear = isNear;
+    if (!isNear) return;
+    const before = Math.floor(this.talkProgress);
+    this.talkProgress = Math.min(this.currentLine.length, this.talkProgress + LETTERS_PER_STEP);
+    if (Math.floor(this.talkProgress) !== before && Math.floor(this.talkProgress) % 2 === 0) soundEngine.playSoundEffect(SOUND_EFFECT.TALK);
+    // Se da la vuelta para mirar a Paco.
+    this.facing = world.player.centerX < this.centerX ? -1 : 1;
+  }
+
+  /** Frase que toca ahora. */
+  get currentLine() {
+    return this.lines[this.lineIndex];
+  }
+
+  /**
+   * @param {CanvasRenderingContext2D} context
+   * @param {number} cameraX
+   */
+  draw(context, cameraX) {
+    const x = this.centerX - cameraX;
+    const talking = this.isPlayerNear && this.talkProgress < this.currentLine.length;
+    if (this.look === 'flower') this.drawFlower(context, x, talking);
+    else drawSprite(context, SPRITES[this.look], x - SPRITES[this.look].width / 2, this.bottom - SPRITES[this.look].height + Math.sin(this.ageInSteps / 10) * 0.6, { mirrored: this.facing > 0 });
+    if (this.isPlayerNear) this.drawBubble(context, x);
+  }
+
+  /** @private Flor cotilla: pétalos naranjas y cara que mueve la boca al hablar. */
+  drawFlower(context, x, talking) {
+    const sway = Math.sin(this.ageInSteps / 18) * 1.2;
+    context.strokeStyle = OUTLINE_COLOR; context.lineWidth = 3; context.lineCap = 'round';
+    context.beginPath(); context.moveTo(x, this.bottom); context.quadraticCurveTo(x + sway * 0.4, this.bottom - 6, x + sway, this.bottom - 9); context.stroke();
+    context.strokeStyle = '#3ac85a'; context.lineWidth = 1.8;
+    context.beginPath(); context.moveTo(x, this.bottom); context.quadraticCurveTo(x + sway * 0.4, this.bottom - 6, x + sway, this.bottom - 9); context.stroke();
+    const headX = x + sway;
+    const headY = this.bottom - 10;
+    for (let petal = 0; petal < 8; petal++) {
+      const angle = petal * Math.PI / 4;
+      outlinedCircle(context, headX + Math.cos(angle) * 4.4, headY + Math.sin(angle) * 4.4, 2.8, '#ffc86a', '#e8601c', 0.6);
+    }
+    outlinedCircle(context, headX, headY, 4.2, '#fff0a0', '#ffc02a', 0.8);
+    const look = this.facing > 0 ? 0.6 : -0.6;
+    eye(context, headX - 1.5, headY - 0.7, 1, { lookX: look }); eye(context, headX + 1.5, headY - 0.7, 1, { lookX: look });
+    mouth(context, headX, headY + 1.8, 2, talking && Math.floor(this.ageInSteps / 4) % 2 ? 'open' : 'smile');
+  }
+
+  /** @private Bocadillo de cómic con el texto escribiéndose. */
+  drawBubble(context, x) {
+    const text = this.currentLine.slice(0, Math.floor(this.talkProgress));
+    const rows = this.currentLine.split('\n');
+    const widest = Math.max(...rows.map(row => measureTextWidth(row)));
+    const width = widest + 10;
+    const height = rows.length * 10 + 6;
+    const left = Math.max(2, Math.min(318 - width, x - width / 2));
+    const top = this.y - height - 14;
+    roundedPath(context, left, top, width, height, 3);
+    context.fillStyle = '#fffdf2'; context.fill();
+    context.strokeStyle = OUTLINE_COLOR; context.lineWidth = 1; context.stroke();
+    context.beginPath(); context.moveTo(x - 3, top + height - 0.3); context.lineTo(x + 3, top + height - 0.3); context.lineTo(x + (this.facing > 0 ? 3 : -3), top + height + 5); context.closePath();
+    context.fillStyle = '#fffdf2'; context.fill(); context.stroke();
+    context.beginPath(); context.moveTo(x - 2.6, top + height - 0.6); context.lineTo(x + 2.6, top + height - 0.6); context.strokeStyle = '#fffdf2'; context.lineWidth = 1.6; context.stroke();
+    text.split('\n').forEach((row, index) => drawText(context, row, left + 5, top + 4 + index * 10, '#2a1a3a'));
+  }
+}
+return { Talker };
+})();
+
+// ─── src/entities/wonder/Doorway.js ───
+const __module_src_entities_wonder_Doorway_js = (() => {
+/**
+ * @file Entrada y salida de las salas secretas: alcantarillas (ABAJO) y
+ * puertas (ARRIBA).
+ */
+const { TILE_SIZE } = __module_src_config_constants_js;
+const { BUTTON } = __module_src_core_input_js;
+const { Entity } = __module_src_entities_Entity_js;
+const { OUTLINE_COLOR } = __module_src_graphics_hd_js;
+const { roundedPath, fillWithOutline } = __module_src_graphics_shapes_js;
+
+/** Pasos de espera antes de poder volver a usar una puerta. */
+const COOLDOWN_STEPS = 40;
+
+class Doorway extends Entity {
+  /**
+   * @param {number} column
+   * @param {number} row Fila que pisa.
+   * @param {{look: 'manhole'|'door', roomId: string|null, direction: 'enter'|'exit'}} settings
+   */
+  constructor(column, row, settings) {
+    super(column * TILE_SIZE, (row + 1) * TILE_SIZE - 16, 16, 16);
+    this.look = settings.look;
+    this.roomId = settings.roomId;
+    this.direction = settings.direction;
+    this.drawsBehindTiles = false;
+    this.cooldown = COOLDOWN_STEPS;
+    this.isPlayerNear = false;
+  }
+
+  /** Botón que hay que pulsar para usarla. */
+  get triggerButton() {
+    return this.look === 'manhole' ? BUTTON.DOWN : BUTTON.UP;
+  }
+
+  /** @param {import('../../game/World.js').World} world */
+  update(world) {
+    this.ageInSteps++;
+    if (this.cooldown > 0) this.cooldown--;
+    const player = world.player;
+    const centered = Math.abs(player.centerX - this.centerX) < 8;
+    this.isPlayerNear = centered && player.isOnGround && Math.abs(player.bottom - this.bottom) < 4;
+    if (this.isPlayerNear && this.cooldown === 0 && world.isPlayerControllable() && (world.controls.wasPressed(this.triggerButton) || world.controls.isHeld(this.triggerButton))) {
+      this.cooldown = COOLDOWN_STEPS;
+      world.useDoor(this);
+    }
+  }
+
+  /**
+   * @param {CanvasRenderingContext2D} context
+   * @param {number} cameraX
+   */
+  draw(context, cameraX) {
+    const x = this.x - cameraX;
+    if (this.look === 'manhole') {
+      // Tapa de alcantarilla a ras de suelo.
+      context.beginPath(); context.ellipse(x + 8, this.bottom - 0.6, 7.6, 1.8, 0, 0, Math.PI * 2);
+      fillWithOutline(context, '#8a8a9a', '#4a4a5a', this.bottom - 2.6, this.bottom + 1, 0.7);
+      context.strokeStyle = 'rgba(20,12,32,0.6)'; context.lineWidth = 0.5;
+      for (let line = -4; line <= 4; line += 2) { context.beginPath(); context.moveTo(x + 8 + line, this.bottom - 1.9); context.lineTo(x + 8 + line, this.bottom + 0.4); context.stroke(); }
+    } else {
+      // Puerta de madera con marco y pomo dorado.
+      roundedPath(context, x + 1, this.y - 4, 14, 20, 5);
+      fillWithOutline(context, '#a8683a', '#5a3018', this.y - 4, this.bottom, 1);
+      roundedPath(context, x + 3.4, this.y - 1.4, 9.2, 17.4, 3.6);
+      context.fillStyle = 'rgba(30,12,4,0.35)'; context.fill();
+      context.strokeStyle = 'rgba(255,220,160,0.35)'; context.lineWidth = 0.5; context.stroke();
+      context.fillStyle = '#ffd24a'; context.beginPath(); context.arc(x + 11.4, this.y + 7, 1, 0, Math.PI * 2); context.fill();
+      context.strokeStyle = OUTLINE_COLOR; context.lineWidth = 0.4; context.stroke();
+    }
+    if (this.isPlayerNear) {
+      const bounce = Math.sin(this.ageInSteps / 6) * 1.4;
+      const up = this.look !== 'manhole';
+      const arrowY = this.y - (up ? 12 : 6) + bounce;
+      context.beginPath();
+      if (up) { context.moveTo(x + 8, arrowY - 4); context.lineTo(x + 13, arrowY + 2); context.lineTo(x + 3, arrowY + 2); }
+      else { context.moveTo(x + 8, arrowY + 4); context.lineTo(x + 13, arrowY - 2); context.lineTo(x + 3, arrowY - 2); }
+      context.closePath();
+      fillWithOutline(context, '#fff6a8', '#ffc02a', arrowY - 4, arrowY + 4, 0.9);
+    }
+  }
+}
+return { Doorway };
+})();
+
 // ─── src/game/entityFactory.js ───
 const __module_src_game_entityFactory_js = (() => {
 /**
@@ -10521,6 +11990,10 @@ const { LavaBubble } = __module_src_entities_enemies_LavaBubble_js;
 const { TaxInspectorBoss } = __module_src_entities_enemies_TaxInspectorBoss_js;
 const { RotatingHazard } = __module_src_entities_hazards_RotatingHazard_js;
 const { MovingPlatform } = __module_src_entities_MovingPlatform_js;
+const { WonderFlower } = __module_src_entities_wonder_WonderFlower_js;
+const { BigCoin } = __module_src_entities_wonder_BigCoin_js;
+const { Talker } = __module_src_entities_wonder_Talker_js;
+const { Doorway } = __module_src_entities_wonder_Doorway_js;
 
 /**
  * Crea un enemigo a partir de su identificador del catálogo.
@@ -10563,6 +12036,10 @@ function createEntityForSpawnPoint(spawnPoint, level, theme) {
     case 'fireBar': return RotatingHazard.createFireBar(column, row, settings);
     case 'windmillBlades': return RotatingHazard.createWindmillBlades(column, row);
     case 'lavaBubble': return new LavaBubble(column);
+    case 'wonderFlower': return new WonderFlower(column, row, settings);
+    case 'bigCoin': return new BigCoin(column, row, settings);
+    case 'talker': return new Talker(column, row, settings);
+    case 'door': return new Doorway(column, row, settings);
     default:
       console.warn(`Tipo de aparición desconocido: "${kind}"`);
       return null;
@@ -11112,7 +12589,7 @@ const { SPRITES, drawSprite } = __module_src_graphics_sprites_js;
 const { drawText, measureTextWidth } = __module_src_graphics_font_js;
 const { BACKGROUND_LAYER_WIDTH, PARALLAX_FACTORS } = __module_src_graphics_backgroundConstants_js;
 const { getGroundDecorationImage, drawGroundDecoration, getBarImage, BAR_SIZE, DECORATION_PADDING } = __module_src_graphics_decorationImages_js;
-const { TILE, isSolidTile } = __module_src_world_tileTypes_js;
+const { TILE, isSolidTile, isBeatTile } = __module_src_world_tileTypes_js;
 const { GOAL_POLE_TOP_ROW } = __module_src_world_LevelBuilder_js;
 const { HAM_START_Y } = __module_src_game_GoalSequence_js;
 
@@ -11192,7 +12669,7 @@ function chooseGroundImage(tileMap, column, row, theme, tileImages) {
  * @param {number} scene.stepCounter Para las animaciones.
  * @param {number} cameraX
  */
-function drawTileLayer(context, { tileMap, tileImages, theme, blockBumpOffsets, stepCounter }, cameraX) {
+function drawTileLayer(context, { tileMap, tileImages, theme, blockBumpOffsets, stepCounter, isBeatWarning = false }, cameraX) {
   const firstColumn = Math.max(0, Math.floor(cameraX / TILE_SIZE));
   const lastColumn = Math.min(tileMap.widthInTiles - 1, firstColumn + VISIBLE_COLUMNS);
   const animationStep = Math.floor(stepCounter / STEPS_PER_TILE_FRAME);
@@ -11205,6 +12682,10 @@ function drawTileLayer(context, { tileMap, tileImages, theme, blockBumpOffsets, 
       const screenX = Math.round(column * TILE_SIZE - cameraX);
       const screenY = row * TILE_SIZE - (blockBumpOffsets.get(`${column},${row}`) || 0);
 
+      if (isBeatTile(tile)) {
+        drawBeatTile(context, tile, screenX, screenY, stepCounter, isBeatWarning);
+        continue;
+      }
       if (tile === TILE.LAVA || tile === TILE.WATER) {
         drawLiquidTile(context, tileMap, column, row, tile, screenX, screenY, stepCounter);
         continue;
@@ -11247,6 +12728,53 @@ function drawBlockGlow(context, screenX, screenY, stepCounter, column) {
   gradient.addColorStop(1, 'rgba(255, 150, 40, 0)');
   context.fillStyle = gradient;
   context.fillRect(screenX - 14, screenY - 14, 44, 44);
+  context.restore();
+}
+
+/** Plataformas "al ritmo": sólidas con una nota musical o fantasmas punteadas. */
+function drawBeatTile(context, tile, screenX, screenY, stepCounter, isWarning) {
+  const isGroupA = tile === TILE.BEAT_A_ON || tile === TILE.BEAT_A_OFF;
+  const isSolid = tile === TILE.BEAT_A_ON || tile === TILE.BEAT_B_ON;
+  const [light, dark, glowRgb] = isGroupA ? ['#9af2ff', '#1a7ad8', '90, 210, 255'] : ['#ffb0f4', '#b02aa8', '255, 120, 235'];
+  const flicker = isWarning && Math.floor(stepCounter / 3) % 2 === 0;
+  if (isSolid) {
+    context.save();
+    context.globalAlpha = flicker ? 0.45 : 1;
+    roundedPath(context, screenX + 0.5, screenY + 0.5, TILE_SIZE - 1, TILE_SIZE - 1, 3);
+    fillWithOutline(context, light, dark, screenY, screenY + TILE_SIZE, 1);
+    context.fillStyle = 'rgba(255,255,255,0.4)';
+    context.fillRect(screenX + 2.4, screenY + 1.8, TILE_SIZE - 4.8, 1);
+    // Nota musical.
+    context.fillStyle = '#ffffff';
+    context.beginPath(); context.ellipse(screenX + 6.4, screenY + 11, 2.4, 1.8, -0.4, 0, Math.PI * 2); context.fill();
+    context.strokeStyle = '#ffffff'; context.lineWidth = 0.9;
+    context.beginPath(); context.moveTo(screenX + 8.4, screenY + 10.4); context.lineTo(screenX + 8.4, screenY + 4); context.lineTo(screenX + 11.4, screenY + 5.6); context.stroke();
+    context.restore();
+    addGlowTile(context, screenX + 8, screenY + 8, glowRgb, 0.22 + 0.1 * Math.sin(stepCounter / 10));
+  } else {
+    context.save();
+    context.globalAlpha = isWarning && !flicker ? 0.85 : 0.35;
+    roundedPath(context, screenX + 0.8, screenY + 0.8, TILE_SIZE - 1.6, TILE_SIZE - 1.6, 3);
+    context.setLineDash([2, 2]);
+    context.strokeStyle = light;
+    context.lineWidth = 1;
+    context.stroke();
+    context.setLineDash([]);
+    context.fillStyle = `rgba(${glowRgb}, 0.1)`;
+    context.fill();
+    context.restore();
+  }
+}
+
+/** Resplandor aditivo sobre una baldosa. */
+function addGlowTile(context, x, y, rgb, intensity) {
+  context.save();
+  context.globalCompositeOperation = 'lighter';
+  const gradient = context.createRadialGradient(x, y, 1, x, y, 18);
+  gradient.addColorStop(0, `rgba(${rgb}, ${intensity})`);
+  gradient.addColorStop(1, `rgba(${rgb}, 0)`);
+  context.fillStyle = gradient;
+  context.fillRect(x - 18, y - 18, 36, 36);
   context.restore();
 }
 
@@ -11666,6 +13194,9 @@ const __module_src_game_hud_js = (() => {
 const { LEVEL_TIMER, SCREEN_WIDTH } = __module_src_config_constants_js;
 const { SPRITES, drawSpriteFitted } = __module_src_graphics_sprites_js;
 const { drawText } = __module_src_graphics_font_js;
+const { OUTLINE_COLOR } = __module_src_graphics_hd_js;
+const { outlinedCircle } = __module_src_graphics_shapes_js;
+const { sparkle } = __module_src_graphics_creatureKit_js;
 
 const LABEL_ROW_Y = 5;
 const VALUE_ROW_Y = 15;
@@ -11680,8 +13211,11 @@ const STYLE = { outlineColor: '#140c20' };
  * @param {string} status.levelName
  * @param {number} status.timeRemaining
  * @param {number} status.stepCounter Para hacer parpadear el tiempo cuando se acaba.
+ * @param {boolean} status.hasSeed Si ya tiene la Semilla Maravilla de este nivel.
+ * @param {number} status.bigCoins Monedas gigantes conseguidas en este nivel.
+ * @param {number} status.bigCoinTotal Monedas gigantes que tiene el nivel.
  */
-function drawHud(context, { session, levelNumber, levelName, timeRemaining, stepCounter }) {
+function drawHud(context, { session, levelNumber, levelName, timeRemaining, stepCounter, hasSeed, bigCoins, bigCoinTotal }) {
   // Franja oscura translúcida para que se lea sobre cualquier fondo.
   const bar = context.createLinearGradient(0, 0, 0, 30);
   bar.addColorStop(0, 'rgba(10, 6, 28, 0.6)');
@@ -11703,8 +13237,480 @@ function drawHud(context, { session, levelNumber, levelName, timeRemaining, step
   const blinkRed = isRunningOut && Math.floor(stepCounter / 16) % 2 === 1;
   drawText(context, 'TIEMPO', 308, LABEL_ROW_Y, '#ffd84a', { ...STYLE, align: 'right' });
   drawText(context, String(timeRemaining), 308, VALUE_ROW_Y, blinkRed ? '#ff5a5a' : '#ffffff', { ...STYLE, align: 'right' });
+
+  drawCollectibleCounters(context, { hasSeed, bigCoins, bigCoinTotal });
+}
+
+/** Contadores de la Semilla Maravilla y de las monedas gigantes del nivel. */
+function drawCollectibleCounters(context, { hasSeed, bigCoins, bigCoinTotal }) {
+  // Semilla Maravilla.
+  outlinedCircle(context, 17, 28.5, 3.6, hasSeed ? '#fff6a8' : '#8a8498', hasSeed ? '#e8a810' : '#4a4658', 0.7);
+  if (hasSeed) sparkle(context, 17, 28.5, 2.6, '#ffffff');
+  else { context.strokeStyle = OUTLINE_COLOR; context.lineWidth = 0.5; context.setLineDash([1, 1]); context.beginPath(); context.arc(17, 28.5, 2, 0, Math.PI * 2); context.stroke(); context.setLineDash([]); }
+  drawText(context, hasSeed ? '1/1' : '0/1', 23, 26, hasSeed ? '#ffe45a' : '#c8c4d8', STYLE);
+  // Monedas gigantes.
+  for (let coin = 0; coin < bigCoinTotal; coin++) {
+    const owned = coin < bigCoins;
+    outlinedCircle(context, 52 + coin * 9, 28.5, 3.3, owned ? '#ffc0f4' : '#8a8498', owned ? '#b02aa8' : '#4a4658', 0.7);
+    if (owned) sparkle(context, 52 + coin * 9, 28.5, 2.2, '#ffffff');
+  }
 }
 return { drawHud };
+})();
+
+// ─── src/entities/wonder/StampedeBull.js ───
+const __module_src_entities_wonder_StampedeBull_js = (() => {
+/**
+ * @file Toro gigante de la maravilla "estampida": persigue a Paco desde atrás
+ * a velocidad constante. No se puede pisar; hay que correr más que él.
+ */
+const { Entity } = __module_src_entities_Entity_js;
+const { SPRITES, drawSprite } = __module_src_graphics_sprites_js;
+const { addGlow } = __module_src_graphics_shapes_js;
+const { soundEngine, SOUND_EFFECT } = __module_src_audio_soundEngine_js;
+const { screenFx } = __module_src_graphics_screenFx_js;
+const { GROUND_SURFACE_Y } = __module_src_config_constants_js;
+
+const SPEED = 1.9;
+const SCALE = 2.6;
+
+class StampedeBull extends Entity {
+  /** @param {number} startX Posición inicial (detrás de Paco). */
+  constructor(startX) {
+    super(startX, GROUND_SURFACE_Y - 30, 46, 30);
+    this.facing = 1;
+  }
+
+  /** @param {import('../../game/World.js').World} world */
+  update(world) {
+    this.ageInSteps++;
+    this.x += SPEED;
+    if (this.ageInSteps % 6 === 0) world.spawnDust(this.x + 10, GROUND_SURFACE_Y - 1);
+    if (this.ageInSteps % 40 === 0) { soundEngine.playSoundEffect(SOUND_EFFECT.BULL_SNORT); screenFx.shake(1.4, 12); }
+    // Si se ha quedado muy atrás, avanza hasta ponerse a distancia de Paco.
+    const gap = world.player.x - this.x;
+    if (gap > 150) this.x = world.player.x - 150;
+  }
+
+  /** @param {import('../../game/World.js').World} world */
+  onPlayerContact(player, world) {
+    player.takeHit(world);
+  }
+
+  /**
+   * @param {CanvasRenderingContext2D} context
+   * @param {number} cameraX
+   */
+  draw(context, cameraX) {
+    const frameCount = 4;
+    const frame = (Math.floor(this.ageInSteps / 3) % frameCount) + 1;
+    const sprite = SPRITES[`toro_angry_frame${frame}`];
+    const x = this.x - cameraX + this.width / 2;
+    addGlow(context, x, GROUND_SURFACE_Y - 16, 46, '255, 80, 30', 0.35);
+    drawSprite(context, sprite, x - sprite.width / 2, GROUND_SURFACE_Y - sprite.height, { mirrored: true, scaleX: SCALE, scaleY: SCALE });
+  }
+}
+return { StampedeBull };
+})();
+
+// ─── src/entities/wonder/WonderSeed.js ───
+const __module_src_entities_wonder_WonderSeed_js = (() => {
+/**
+ * @file Semilla Maravilla: premio por superar el tramo de una Flor Maravilla.
+ * Es una tortilla dorada con una estrella; da puntos y se guarda en la partida.
+ */
+const { TILE_SIZE } = __module_src_config_constants_js;
+const { Entity } = __module_src_entities_Entity_js;
+const { addGlow } = __module_src_graphics_shapes_js;
+const { OUTLINE_COLOR } = __module_src_graphics_hd_js;
+const { shadedEllipse, sparkle, sheen } = __module_src_graphics_creatureKit_js;
+
+class WonderSeed extends Entity {
+  /**
+   * @param {number} column
+   * @param {number} row Fila central.
+   */
+  constructor(column, row) {
+    super(column * TILE_SIZE, row * TILE_SIZE, 16, 16);
+    this.popSteps = 0;
+    /** Ilumina un poco a su alrededor en los apagones. */
+    this.isWonderLight = true;
+  }
+
+  update() {
+    this.ageInSteps++;
+  }
+
+  /** @param {import('../../game/World.js').World} world */
+  onPlayerContact(player, world) {
+    if (this.shouldBeRemoved) return;
+    this.shouldBeRemoved = true;
+    world.collectSeed(this);
+  }
+
+  /**
+   * @param {CanvasRenderingContext2D} context
+   * @param {number} cameraX
+   */
+  draw(context, cameraX) {
+    const x = this.centerX - cameraX;
+    const appear = Math.min(1, this.ageInSteps / 14);
+    const scale = appear < 1 ? 1 + Math.sin(appear * Math.PI) * 0.5 : 1;
+    const y = this.centerY + Math.sin(this.ageInSteps / 12) * 2.4;
+    addGlow(context, x, y, 30, '255, 220, 110', 0.7);
+    context.save();
+    context.translate(x, y);
+    context.scale(scale * appear, scale * appear);
+    context.rotate(Math.sin(this.ageInSteps / 24) * 0.15);
+    shadedEllipse(context, 0, 0, 7.4, 7.4, '#ffd23a', { light: '#fff6a8', dark: '#c8861c' });
+    context.strokeStyle = OUTLINE_COLOR; context.lineWidth = 0.9; context.beginPath(); context.arc(0, 0, 7.4, 0, Math.PI * 2); context.stroke();
+    context.strokeStyle = '#c8861c'; context.lineWidth = 0.6; context.beginPath(); context.arc(0, 0, 5.4, 0, Math.PI * 2); context.stroke();
+    sparkle(context, 0, 0, 4.4, '#fffbe0');
+    sheen(context, -3, -3.4, 2, 0.9, -0.6, 0.7);
+    context.restore();
+    // Destellos que giran alrededor.
+    for (let star = 0; star < 3; star++) {
+      const angle = this.ageInSteps / 20 + star * 2.1;
+      sparkle(context, x + Math.cos(angle) * 11, y + Math.sin(angle) * 9, 1.8 + Math.sin(this.ageInSteps / 6 + star), '#ffffff');
+    }
+  }
+}
+return { WonderSeed };
+})();
+
+// ─── src/game/WonderDirector.js ───
+const __module_src_game_WonderDirector_js = (() => {
+/**
+ * @file Director de las maravillas: lo que pasa cuando Paco toca una Flor
+ * Maravilla. Cada nivel tiene una que transforma el tramo hasta `endColumn`:
+ *
+ *   - moon: gravedad lunar (saltos enormes y caídas lentas).
+ *   - rain: llueven pesetas del cielo.
+ *   - rhythm: las plataformas al ritmo se alternan con la música.
+ *   - dark: apagón; solo se ve alrededor de Paco.
+ *   - stampede: un toro gigante persigue a Paco.
+ *   - parade: los enemigos del tramo bailan y se vuelven inofensivos.
+ *
+ * Al llegar al final del tramo aparece la Semilla Maravilla.
+ */
+const { TILE_SIZE, SCREEN_WIDTH } = __module_src_config_constants_js;
+const { randomBetween, rectanglesOverlap } = __module_src_core_math_js;
+const { soundEngine, SOUND_EFFECT } = __module_src_audio_soundEngine_js;
+const { screenFx } = __module_src_graphics_screenFx_js;
+const { TILE, isBeatTile, toggleBeatTile } = __module_src_world_tileTypes_js;
+const { GAMEPLAY_MESSAGES } = __module_src_world_texts_js;
+const { FallingCoin } = __module_src_entities_wonder_FallingCoin_js;
+const { StampedeBull } = __module_src_entities_wonder_StampedeBull_js;
+const { WonderSeed } = __module_src_entities_wonder_WonderSeed_js;
+
+/** Gravedad de Paco durante la maravilla lunar (1 = normal). */
+const MOON_GRAVITY_SCALE = 0.38;
+/** Pasos entre pulsos de las plataformas al ritmo. */
+const BEAT_PERIOD_STEPS = 56;
+/** Pasos antes del pulso en los que las plataformas que van a cambiar parpadean. */
+const BEAT_WARNING_STEPS = 16;
+/** Pasos entre pesetas de la lluvia. */
+const RAIN_INTERVAL_STEPS = 5;
+/** Oscuridad del apagón. */
+const DARK_LIGHTING = Object.freeze({ darkness: 0.9, color: '#02010a', playerLightRadius: 52 });
+/** Distancia a la que nace el toro de la estampida, por detrás de Paco. */
+const STAMPEDE_SPAWN_GAP = 150;
+/** Música de cada tipo de maravilla. */
+const WONDER_MUSIC = Object.freeze({ dark: 'maravillaSombra', stampede: 'maravillaSombra' });
+
+class WonderDirector {
+  /** @param {import('./World.js').World} world */
+  constructor(world) {
+    this.world = world;
+    /** @type {{kind: string, startX: number, endX: number, steps: number}|null} */
+    this.active = null;
+    this.hasTriggered = false;
+    this.beatTiles = [];
+    this.beatCountdown = BEAT_PERIOD_STEPS;
+    this.rainCountdown = RAIN_INTERVAL_STEPS;
+    this.putBeatTilesToSleep();
+  }
+
+  /** @private Al empezar el nivel, las plataformas al ritmo están "dormidas" (fantasma). */
+  putBeatTilesToSleep() {
+    const tileMap = this.world.tileMap;
+    this.beatTiles = [];
+    for (let row = 0; row < tileMap.heightInTiles; row++) {
+      for (let column = 0; column < tileMap.widthInTiles; column++) {
+        const tile = tileMap.getTile(column, row);
+        if (!isBeatTile(tile)) continue;
+        this.beatTiles.push({ column, row, group: tile === TILE.BEAT_A_ON || tile === TILE.BEAT_A_OFF ? 'A' : 'B' });
+        tileMap.setTile(column, row, tile === TILE.BEAT_A_ON || tile === TILE.BEAT_A_OFF ? TILE.BEAT_A_OFF : TILE.BEAT_B_OFF);
+      }
+    }
+  }
+
+  /** ¿Hay una maravilla en marcha? */
+  get isActive() {
+    return this.active !== null;
+  }
+
+  /** ¿Parpadean ahora las plataformas al ritmo (aviso de cambio)? */
+  get isBeatWarning() {
+    return this.isActive && this.active.kind === 'rhythm' && this.beatCountdown <= BEAT_WARNING_STEPS;
+  }
+
+  /** Iluminación especial de la maravilla (o null si no hay). */
+  get lighting() {
+    return this.isActive && this.active.kind === 'dark' ? DARK_LIGHTING : null;
+  }
+
+  /**
+   * Paco ha tocado una Flor Maravilla.
+   * @param {{eventKind: string, endColumn: number, centerX: number, centerY: number}} flower
+   */
+  trigger(flower) {
+    if (this.hasTriggered) return;
+    const world = this.world;
+    this.hasTriggered = true;
+    this.active = { kind: flower.eventKind, startX: flower.centerX, endX: flower.endColumn * TILE_SIZE, steps: 0 };
+    soundEngine.playSoundEffect(SOUND_EFFECT.WONDER_START);
+    soundEngine.playMusic(WONDER_MUSIC[flower.eventKind] || 'maravilla', { restart: true });
+    world.showBanner(GAMEPLAY_MESSAGES.wonderBanner[flower.eventKind] || GAMEPLAY_MESSAGES.wonderBanner.default, 150);
+    screenFx.flash('#ffffff', 0.8);
+    screenFx.punch(0.08);
+    screenFx.shake(2, 14);
+    world.spawnImpact(flower.centerX, flower.centerY, '#ff9aff');
+    for (let ring = 0; ring < 3; ring++) world.spawnImpact(flower.centerX + (ring - 1) * 10, flower.centerY - ring * 4, ring % 2 ? '#7ad8ff' : '#ffe45a');
+
+    switch (flower.eventKind) {
+      case 'moon':
+        world.player.gravityScale = MOON_GRAVITY_SCALE;
+        break;
+      case 'rhythm':
+        for (const beat of this.beatTiles) world.tileMap.setTile(beat.column, beat.row, beat.group === 'A' ? TILE.BEAT_A_ON : TILE.BEAT_B_OFF);
+        this.beatCountdown = BEAT_PERIOD_STEPS;
+        break;
+      case 'stampede':
+        world.addEntity(new StampedeBull(world.player.x - STAMPEDE_SPAWN_GAP));
+        break;
+      case 'parade':
+        for (const entity of world.entities) this.applyToEntity(entity);
+        break;
+      default:
+        break;
+    }
+  }
+
+  /**
+   * Aplica el efecto del desfile a un enemigo recién aparecido o ya presente.
+   * @param {import('../entities/Entity.js').Entity} entity
+   */
+  applyToEntity(entity) {
+    if (!this.isActive || this.active.kind !== 'parade' || !entity.isEnemy || entity.isDefeated) return;
+    if (entity.x < this.active.startX - TILE_SIZE * 4 || entity.x > this.active.endX) return;
+    entity.isDancing = true;
+    entity.isHarmful = false;
+  }
+
+  /** Avanza la maravilla un paso. */
+  update() {
+    const world = this.world;
+    world.player.gravityScale = this.isActive && this.active.kind === 'moon' ? MOON_GRAVITY_SCALE : 1;
+    screenFx.wonderTarget = this.isActive ? 1 : 0;
+    if (!this.isActive) return;
+    const wonder = this.active;
+    wonder.steps++;
+
+    if (wonder.kind === 'rain' && --this.rainCountdown <= 0) {
+      this.rainCountdown = RAIN_INTERVAL_STEPS;
+      world.addEntity(new FallingCoin(world.player.centerX + randomBetween(-110, SCREEN_WIDTH * 0.5), -8));
+    }
+    if (wonder.kind === 'rhythm') this.updateBeat();
+
+    const reachedEnd = world.player.x > wonder.endX;
+    if (reachedEnd) this.end();
+  }
+
+  /** @private Cuenta atrás del pulso y cambio de plataformas. */
+  updateBeat() {
+    const tileMap = this.world.tileMap;
+    if (--this.beatCountdown > 0) return;
+    this.beatCountdown = BEAT_PERIOD_STEPS;
+    soundEngine.playSoundEffect(SOUND_EFFECT.BEAT);
+    const player = this.world.player;
+    for (const beat of this.beatTiles) {
+      const tile = tileMap.getTile(beat.column, beat.row);
+      const next = toggleBeatTile(tile);
+      const isBecomingSolid = next === TILE.BEAT_A_ON || next === TILE.BEAT_B_ON;
+      const tileBox = { x: beat.column * TILE_SIZE, y: beat.row * TILE_SIZE, width: TILE_SIZE, height: TILE_SIZE };
+      // Si Paco está dentro, la plataforma espera al siguiente pulso.
+      if (isBecomingSolid && rectanglesOverlap(player, tileBox)) continue;
+      tileMap.setTile(beat.column, beat.row, next);
+    }
+  }
+
+  /** Termina la maravilla: todo vuelve a la normalidad y aparece la semilla. */
+  end() {
+    const world = this.world;
+    const wonder = this.active;
+    this.active = null;
+    world.player.gravityScale = 1;
+    soundEngine.playSoundEffect(SOUND_EFFECT.WONDER_END);
+    world.restoreLevelMusic();
+    world.entities = world.entities.filter(entity => !(entity instanceof StampedeBull) && !(entity instanceof FallingCoin));
+    for (const entity of world.entities) entity.isDancing = false;
+    screenFx.flash('#ffffff', 0.5);
+    const seedColumn = Math.floor(wonder.endX / TILE_SIZE) + 3;
+    world.addEntity(new WonderSeed(seedColumn, 9));
+    world.showBanner(GAMEPLAY_MESSAGES.wonderSeedAppears, 120);
+    world.spawnImpact(seedColumn * TILE_SIZE + 8, 9 * TILE_SIZE + 8, '#ffe45a');
+  }
+}
+return { WonderDirector };
+})();
+
+// ─── src/game/AreaManager.js ───
+const __module_src_game_AreaManager_js = (() => {
+/**
+ * @file Salas secretas: al usar una puerta o una alcantarilla, el mundo cambia
+ * a otra "área" (un mapa pequeño con su propio tema) y al salir vuelve
+ * exactamente al punto donde Paco había entrado. El cambio se hace con una
+ * transición de iris.
+ */
+const { TILE_SIZE } = __module_src_config_constants_js;
+const { soundEngine, SOUND_EFFECT } = __module_src_audio_soundEngine_js;
+const { THEMES } = __module_src_world_themes_js;
+const { GAMEPLAY_MESSAGES } = __module_src_world_texts_js;
+const { WonderDirector } = __module_src_game_WonderDirector_js;
+
+/** Pasos que tarda en cerrarse (y en abrirse) el iris. */
+const IRIS_STEPS = 16;
+
+class AreaManager {
+  /** @param {import('./World.js').World} world */
+  constructor(world) {
+    this.world = world;
+    /** Estado del mundo principal mientras Paco está en una sala (o null). */
+    this.snapshot = null;
+    /** @type {{phase: 'closing'|'opening', steps: number, door: Object}|null} */
+    this.transition = null;
+  }
+
+  /** ¿Está Paco en una sala secreta? */
+  get isInRoom() {
+    return this.snapshot !== null;
+  }
+
+  /**
+   * Cuánto está abierto el iris (1 = todo visible, 0 = todo negro).
+   * @returns {number}
+   */
+  get irisOpenness() {
+    if (!this.transition) return 1;
+    const progress = this.transition.steps / IRIS_STEPS;
+    return this.transition.phase === 'closing' ? 1 - progress : progress;
+  }
+
+  /**
+   * Paco ha usado una puerta: empieza la transición.
+   * @param {import('../entities/wonder/Doorway.js').Doorway} door
+   */
+  useDoor(door) {
+    if (this.transition) return;
+    soundEngine.playSoundEffect(SOUND_EFFECT.DOOR);
+    this.transition = { phase: 'closing', steps: 0, door };
+  }
+
+  /**
+   * Avanza la transición.
+   * @returns {boolean} true si el mundo debe quedarse quieto este paso.
+   */
+  update() {
+    if (!this.transition) return false;
+    this.transition.steps++;
+    if (this.transition.steps < IRIS_STEPS) return true;
+    if (this.transition.phase === 'closing') {
+      if (this.transition.door.direction === 'exit') this.exitRoom(this.transition.door);
+      else this.enterRoom(this.transition.door);
+      this.transition = { phase: 'opening', steps: 0, door: this.transition.door };
+      return true;
+    }
+    this.transition = null;
+    return false;
+  }
+
+  /** @private */
+  enterRoom(door) {
+    const world = this.world;
+    const buildRoom = world.level.roomBuilders[door.roomId];
+    if (!buildRoom) return;
+    this.snapshot = {
+      level: world.level,
+      tileMap: world.tileMap,
+      theme: world.theme,
+      entities: world.entities,
+      platforms: world.platforms,
+      spawnQueue: world.spawnQueue,
+      nextSpawnIndex: world.nextSpawnIndex,
+      cameraX: world.cameraX,
+      remainingCoinsInBlocks: world.remainingCoinsInBlocks,
+      blockBumps: world.blockBumps,
+      wonder: world.wonder,
+      door,
+      playerX: world.player.x,
+      playerY: world.player.y
+    };
+    this.loadArea(buildRoom());
+    world.player.x = 2 * TILE_SIZE + 2;
+    world.player.y = world.tileMap.findFirstSolidRow(2) * TILE_SIZE - world.player.height;
+    world.player.velocityX = 0;
+    world.player.velocityY = 0;
+    world.cameraX = 0;
+    world.showBanner(GAMEPLAY_MESSAGES.secretRoom, 90);
+    soundEngine.playSoundEffect(SOUND_EFFECT.SECRET);
+  }
+
+  /** @private */
+  exitRoom() {
+    const world = this.world;
+    const snapshot = this.snapshot;
+    if (!snapshot) return;
+    world.level = snapshot.level;
+    world.tileMap = snapshot.tileMap;
+    world.theme = snapshot.theme;
+    world.entities = snapshot.entities;
+    world.platforms = snapshot.platforms;
+    world.spawnQueue = snapshot.spawnQueue;
+    world.nextSpawnIndex = snapshot.nextSpawnIndex;
+    world.remainingCoinsInBlocks = snapshot.remainingCoinsInBlocks;
+    world.blockBumps = snapshot.blockBumps;
+    world.blockBumpOffsets = new Map();
+    world.visualEffects = [];
+    world.wonder = snapshot.wonder;
+    world.cameraX = snapshot.cameraX;
+    world.player.x = snapshot.playerX;
+    world.player.y = snapshot.playerY;
+    world.player.velocityX = 0;
+    world.player.velocityY = 0;
+    snapshot.door.cooldown = 60;
+    this.snapshot = null;
+    soundEngine.playSoundEffect(SOUND_EFFECT.DOOR);
+  }
+
+  /** @private Sustituye el área actual del mundo por otra. */
+  loadArea(levelData) {
+    const world = this.world;
+    world.level = levelData;
+    world.tileMap = levelData.tileMap;
+    world.theme = THEMES[levelData.themeName];
+    world.entities = [];
+    world.platforms = [];
+    world.visualEffects = [];
+    world.blockBumps = [];
+    world.blockBumpOffsets = new Map();
+    world.remainingCoinsInBlocks = new Map();
+    world.wonder = new WonderDirector(world);
+    world.cameraX = 0;
+    world.prepareSpawnQueue();
+  }
+}
+return { AreaManager };
 })();
 
 // ─── src/game/World.js ───
@@ -11740,11 +13746,15 @@ const { POWER_UP_KIND } = __module_src_entities_PowerUpItem_js;
 const { VisualEffect, EFFECT_KIND } = __module_src_entities_effects_VisualEffect_js;
 const { FallingFirecracker } = __module_src_entities_hazards_FallingFirecracker_js;
 const { TaxInvoice } = __module_src_entities_hazards_TaxInvoice_js;
+const { FallingCoin } = __module_src_entities_wonder_FallingCoin_js;
 const { createEntityForSpawnPoint, spawnsAheadOfCamera, isEnemySpawn } = __module_src_game_entityFactory_js;
 const { handlePlayerHeadBump } = __module_src_game_blockInteractions_js;
 const { GoalSequence } = __module_src_game_GoalSequence_js;
 const { drawBackground, drawDecorations, drawTileLayer, drawRain, drawShadows, drawLighting, drawTorches } = __module_src_game_worldRenderer_js;
 const { drawHud } = __module_src_game_hud_js;
+const { WonderDirector } = __module_src_game_WonderDirector_js;
+const { AreaManager } = __module_src_game_AreaManager_js;
+const { drawIrisOpening } = __module_src_graphics_uiKit_js;
 
 /** Fases del mundo. */
 const WORLD_PHASE = Object.freeze({ PLAYING: 'playing', PLAYER_DYING: 'playerDying' });
@@ -11800,6 +13810,8 @@ class World {
 
     this.level = this.levelDefinition.build();
     this.tileMap = this.level.tileMap;
+    /** Monedas gigantes del nivel principal (para el marcador, aunque Paco esté en una sala). */
+    this.levelBigCoinTotal = this.level.bigCoinCount;
     // Solo los datos del tema: las imágenes se piden al dibujar, así la lógica
     // del mundo funciona sin navegador (en los tests).
     this.theme = THEMES[this.level.themeName];
@@ -11836,6 +13848,9 @@ class World {
     this.didFallIntoPit = false;
 
     this.createPlayer();
+    /** Director de la Flor Maravilla del nivel y gestor de las salas secretas. */
+    this.wonder = new WonderDirector(this);
+    this.areas = new AreaManager(this);
     this.placeCameraOnPlayer();
     this.prepareSpawnQueue();
     this.createWeather();
@@ -11853,6 +13868,7 @@ class World {
     const startColumn = this.isRespawningAtCheckpoint ? this.level.checkpointColumn : 2;
     this.player = new Player(startColumn * TILE_SIZE + 2, 0);
     this.player.setPowerLevel(this.session.carriedPowerLevel);
+    this.player.isChef = this.session.chefMode;
     const groundRow = this.tileMap.findFirstSolidRow(startColumn);
     this.player.y = groundRow * TILE_SIZE - this.player.height;
     this.playerStartX = this.player.x;
@@ -11965,6 +13981,9 @@ class World {
   rewardStomp(enemy, player, exclamation) {
     player.stompCombo++;
     this.spawnImpact(enemy.centerX, enemy.y + enemy.height * 0.5);
+    if (enemy.isDancing) {
+      for (let coin = 0; coin < 4; coin++) this.addEntity(new FallingCoin(enemy.centerX + (coin - 1.5) * 7, enemy.y - 14 - coin * 4));
+    }
     screenFx.hitStop(2 + Math.min(3, player.stompCombo));
     screenFx.shake(0.7 + player.stompCombo * 0.15, 8);
     this.awardPoints(this.getComboPoints(player.stompCombo), enemy.centerX, enemy.y - 4);
@@ -12015,6 +14034,42 @@ class World {
 
   spawnBrickDebris(x, y, velocityX, velocityY) {
     this.addVisualEffect(new VisualEffect(EFFECT_KIND.BRICK_DEBRIS, x, y, { velocityX, velocityY, color: this.theme.brickColors.base }));
+  }
+
+  /** Destello brillante (monedas, flores, semillas). */
+  spawnSparkle(x, y) {
+    this.addVisualEffect(new VisualEffect(EFFECT_KIND.STAR, x, y, {
+      velocityX: randomBetween(-0.4, 0.4), velocityY: randomBetween(-0.8, -0.2), color: '#ffffff', lifetime: 26, size: 2.6
+    }));
+  }
+
+  /** Paco toca una Flor Maravilla. */
+  triggerWonder(flower) {
+    this.wonder.trigger(flower);
+  }
+
+  /** Paco coge la Semilla Maravilla del nivel. */
+  collectSeed(seed) {
+    this.session.collectSeed(this.levelIndex);
+    soundEngine.playSoundEffect(SOUND_EFFECT.SEED);
+    this.showBanner(GAMEPLAY_MESSAGES.seedCollected, 140);
+    this.showFloatingText('+2000', seed.centerX, seed.y - 6, '#ffe45a', 70);
+    this.spawnImpact(seed.centerX, seed.centerY, '#ffe45a');
+    screenFx.flash('#fff2a0', 0.5);
+    screenFx.punch(0.06);
+  }
+
+  /** Paco coge una moneda gigante escondida. */
+  collectBigCoin(coin) {
+    this.session.collectBigCoin(this.levelIndex, coin.coinNumber);
+    soundEngine.playSoundEffect(SOUND_EFFECT.BIG_COIN);
+    this.showFloatingText('+500', coin.centerX, coin.y - 6, '#ff9aff', 60);
+    this.spawnImpact(coin.centerX, coin.centerY, '#ff9aff');
+  }
+
+  /** Paco usa una puerta o alcantarilla (entra o sale de una sala secreta). */
+  useDoor(door) {
+    this.areas.useDoor(door);
   }
 
   /** Hace temblar la pantalla unos pasos (explosiones, golpes al jefe). */
@@ -12197,6 +14252,10 @@ class World {
     }
     if (this.shakeStepsLeft > 0) this.shakeStepsLeft--;
 
+    if (this.areas.update()) {
+      for (const effect of this.visualEffects) effect.update();
+      return;
+    }
     this.updateLevelTimer();
     if (this.phase !== WORLD_PHASE.PLAYING) return;
     this.activateSpawnPointsEnteringView();
@@ -12205,6 +14264,7 @@ class World {
     if (this.goalSequence) this.goalSequence.update();
     else this.player.update(this);
     if (this.phase !== WORLD_PHASE.PLAYING) return;
+    this.wonder.update();
 
     for (const entity of this.entities) if (!entity.shouldBeRemoved) entity.update(this);
     this.turnAroundEnemiesThatCollide();
@@ -12258,7 +14318,9 @@ class World {
       // Nada de enemigos pegados a Paco justo al empezar o reaparecer.
       const isTooCloseToStart = isLevelStart && isEnemySpawn(spawnPoint) && Math.abs(spawnPoint.column * TILE_SIZE - this.playerStartX) < SAFE_START_DISTANCE;
       if (isTooCloseToStart) continue;
-      this.addEntity(createEntityForSpawnPoint(spawnPoint, this.level, this.theme));
+      const entity = createEntityForSpawnPoint(spawnPoint, this.level, this.theme);
+      this.addEntity(entity);
+      if (entity) this.wonder.applyToEntity(entity);
     }
   }
 
@@ -12439,7 +14501,8 @@ class World {
       tileImages,
       theme: this.theme,
       blockBumpOffsets: this.blockBumpOffsets,
-      stepCounter: this.stepCounter
+      stepCounter: this.stepCounter,
+      isBeatWarning: this.wonder.isBeatWarning
     }, cameraX);
     for (const platform of this.platforms) platform.draw(context, cameraX);
     drawShadows(context, { tileMap: this.tileMap, entities: this.entities, player: this.player }, cameraX);
@@ -12454,10 +14517,14 @@ class World {
       levelNumber: this.levelIndex + 1,
       levelName: this.levelDefinition.name,
       timeRemaining: this.timeRemaining,
-      stepCounter: this.stepCounter
+      stepCounter: this.stepCounter,
+      hasSeed: this.session.seeds.has(this.levelIndex),
+      bigCoins: this.session.countBigCoinsInLevel(this.levelIndex),
+      bigCoinTotal: this.levelBigCoinTotal
     });
     this.drawMessages(context);
     if (this.isPaused) this.drawPauseOverlay(context);
+    drawIrisOpening(context, this.areas.irisOpenness);
   }
 
   /**
@@ -12470,11 +14537,20 @@ class World {
     screenFx.grade = theme.grade || { color: '#000000', alpha: 0, mode: 'soft-light' };
     screenFx.vignette = theme.vignette === undefined ? 0.5 : theme.vignette;
     screenFx.bloom = theme.bloom === undefined ? 0.28 : theme.bloom;
-    if (!theme.lighting) return;
+    // Las maravillas tiñen el nivel de colores que van cambiando.
+    if (screenFx.wonder > 0.02) {
+      screenFx.grade = { color: `hsl(${(this.stepCounter * 3) % 360}, 95%, 60%)`, alpha: 0.3 * screenFx.wonder, mode: 'soft-light' };
+      screenFx.bloom = Math.max(screenFx.bloom, 0.5 * screenFx.wonder);
+    }
+    const lighting = this.wonder.lighting || theme.lighting;
+    if (!lighting) return;
     const lights = [];
     if (theme.name === 'hacienda') lights.push(...drawTorches(context, cameraX, this.stepCounter));
-    if (!this.player.isDead) lights.push({ x: this.player.centerX - cameraX, y: this.player.centerY, radius: theme.lighting.playerLightRadius });
-    drawLighting(context, theme.lighting, lights);
+    if (!this.player.isDead) lights.push({ x: this.player.centerX - cameraX, y: this.player.centerY, radius: lighting.playerLightRadius });
+    for (const entity of this.entities) {
+      if (entity.isWonderLight && this.isVisible(entity)) lights.push({ x: entity.centerX - cameraX, y: entity.centerY, radius: 34 });
+    }
+    drawLighting(context, lighting, lights);
   }
 
   /**
@@ -12509,6 +14585,48 @@ class World {
 return { WORLD_PHASE, World };
 })();
 
+// ─── src/core/secretCode.js ───
+const __module_src_core_secretCode_js = (() => {
+/**
+ * @file Detector de combinaciones secretas de botones (el truco clásico
+ * ↑ ↑ ↓ ↓ ◀ ▶ ◀ ▶ B A). Es lógica pura, sin navegador.
+ */
+const { BUTTON } = __module_src_core_input_js;
+
+/** Secuencia del truco del cocinero. */
+const CHEF_CODE = Object.freeze([
+  BUTTON.UP, BUTTON.UP, BUTTON.DOWN, BUTTON.DOWN,
+  BUTTON.LEFT, BUTTON.RIGHT, BUTTON.LEFT, BUTTON.RIGHT,
+  BUTTON.RUN, BUTTON.JUMP
+]);
+
+/**
+ * Crea un detector para una secuencia de botones.
+ * @param {readonly string[]} sequence
+ * @returns {{feed: (button: string) => boolean, reset: () => void}}
+ */
+function createSecretCodeTracker(sequence) {
+  let position = 0;
+  return {
+    /**
+     * Anota un botón recién pulsado.
+     * @returns {boolean} true si con este botón se completa la secuencia.
+     */
+    feed(button) {
+      if (button === sequence[position]) position++;
+      else position = button === sequence[0] ? 1 : 0;
+      if (position < sequence.length) return false;
+      position = 0;
+      return true;
+    },
+    reset() {
+      position = 0;
+    }
+  };
+}
+return { CHEF_CODE, createSecretCodeTracker };
+})();
+
 // ─── src/game/screens/TitleScreen.js ───
 const __module_src_game_screens_TitleScreen_js = (() => {
 /**
@@ -12521,7 +14639,8 @@ const __module_src_game_screens_TitleScreen_js = (() => {
  */
 const { SCREEN_WIDTH, TILE_SIZE, GROUND_SURFACE_Y } = __module_src_config_constants_js;
 const { BUTTON } = __module_src_core_input_js;
-const { loadProgress } = __module_src_core_storage_js;
+const { loadProgress, recordAchievement } = __module_src_core_storage_js;
+const { createSecretCodeTracker, CHEF_CODE } = __module_src_core_secretCode_js;
 const { soundEngine, SOUND_EFFECT } = __module_src_audio_soundEngine_js;
 const { SPRITES, drawSprite } = __module_src_graphics_sprites_js;
 const { pacoSpriteName } = __module_src_graphics_spriteData_js;
@@ -12551,6 +14670,9 @@ class TitleScreen {
     this.highScore = progress.highScore;
     this.highestUnlockedLevel = Math.min(progress.highestUnlockedLevel, LEVELS.length - 1);
     this.continueLevelIndex = this.highestUnlockedLevel;
+    this.chefCodeTracker = createSecretCodeTracker(CHEF_CODE);
+    /** Pasos que quedan de mostrar el aviso del truco del cocinero. */
+    this.chefToastSteps = 0;
     soundEngine.playMusic('flamenco', { restart: true });
   }
 
@@ -12567,16 +14689,36 @@ class TitleScreen {
     if (this.game.controls.wasPressed(BUTTON.DOWN)) this.moveSelection(1, options.length);
     if (this.game.controls.wasPressed(BUTTON.UP)) this.moveSelection(-1, options.length);
 
+    const unlockedChefMode = this.checkSecretCode();
     const selectedOption = options[this.selectedOptionIndex];
     if (selectedOption === MENU_OPTION.CONTINUE) this.updateContinueLevelChoice();
     if (this.stepCounter % TAGLINE_DURATION_STEPS === 0) this.taglineIndex = (this.taglineIndex + 1) % TITLE_TAGLINES.length;
 
-    if (this.stepCounter > INPUT_COOLDOWN_STEPS && this.game.controls.wasConfirmPressed()) {
+    if (this.stepCounter > INPUT_COOLDOWN_STEPS && !unlockedChefMode && this.game.controls.wasConfirmPressed()) {
       soundEngine.playSoundEffect(SOUND_EFFECT.MENU_CONFIRM);
       if (selectedOption === MENU_OPTION.NEW_GAME) this.game.startNewGame(0);
       else if (selectedOption === MENU_OPTION.CONTINUE) this.game.startNewGame(this.continueLevelIndex);
       else this.game.showControlsScreen();
     }
+  }
+
+  /**
+   * @private
+   * Vigila el truco secreto ↑↑↓↓◀▶◀▶ B A: activa el modo cocinero.
+   * @returns {boolean} true si se ha completado en este paso.
+   */
+  checkSecretCode() {
+    if (this.chefToastSteps > 0) this.chefToastSteps--;
+    let completed = false;
+    for (const button of [BUTTON.UP, BUTTON.DOWN, BUTTON.LEFT, BUTTON.RIGHT, BUTTON.RUN, BUTTON.JUMP]) {
+      if (this.game.controls.wasPressed(button) && this.chefCodeTracker.feed(button)) completed = true;
+    }
+    if (!completed) return false;
+    this.game.session.chefMode = !this.game.session.chefMode;
+    recordAchievement({ chefMode: this.game.session.chefMode });
+    this.chefToastSteps = 150;
+    soundEngine.playSoundEffect(SOUND_EFFECT.SECRET);
+    return true;
   }
 
   /** @private */
@@ -12605,6 +14747,10 @@ class TitleScreen {
     this.drawLogo(context);
     this.drawMenu(context);
     this.drawWalkingCharacters(context);
+    if (this.chefToastSteps > 0) {
+      drawPanel(context, 60, 150, 200, 20);
+      drawText(context, this.game.session.chefMode ? '¡MODO COCINERO ACTIVADO!' : 'MODO COCINERO APAGADO', SCREEN_WIDTH / 2, 157, '#ffffff', { align: 'center', outlineColor: '#140c20' });
+    }
     drawText(context, TITLE_TAGLINES[this.taglineIndex], SCREEN_WIDTH / 2, 226, '#fcfcfc', { align: 'center', outlineColor: '#140c20' });
   }
 
@@ -12658,7 +14804,7 @@ class TitleScreen {
     const walkerX = ((this.stepCounter * 1.2) % (SCREEN_WIDTH + 60)) - 30;
     const runFrame = (Math.floor(this.stepCounter / 3) % 8) + 1;
     const guiriFrame = Math.floor(this.stepCounter / 8) % 2 ? 1 : 2;
-    drawSprite(context, SPRITES[pacoSpriteName('small', `run${runFrame}`, 'normal')], walkerX, GROUND_SURFACE_Y - 16);
+    drawSprite(context, SPRITES[pacoSpriteName('small', `run${runFrame}`, this.game.session.chefMode ? 'chef' : 'normal')], walkerX, GROUND_SURFACE_Y - 16);
     drawSprite(context, SPRITES[`guiri_frame${guiriFrame}`], walkerX - 60, GROUND_SURFACE_Y - 16, { mirrored: true });
   }
 }
@@ -13077,7 +15223,7 @@ const __module_src_game_Game_js = (() => {
  */
 const { BUTTON } = __module_src_core_input_js;
 const { toggleFullscreen } = __module_src_core_screen_js;
-const { recordAchievement } = __module_src_core_storage_js;
+const { recordAchievement, loadProgress } = __module_src_core_storage_js;
 const { soundEngine } = __module_src_audio_soundEngine_js;
 const { screenFx } = __module_src_graphics_screenFx_js;
 const { drawIrisOpening } = __module_src_graphics_uiKit_js;
@@ -13102,6 +15248,7 @@ class Game {
   constructor({ controls }) {
     this.controls = controls;
     this.session = new GameSession();
+    this.session.chefMode = loadProgress().chefMode;
     /** Pantalla activa: cualquier objeto con `update()` y `draw(context)`. */
     this.activeScreen = null;
     /** Pantalla del paso anterior, para reiniciar los efectos al cambiar de pantalla. */
@@ -13185,7 +15332,7 @@ class Game {
       this.showLevelIntro();
       return;
     }
-    recordAchievement({ score: this.session.score });
+    recordAchievement({ score: this.session.score, seeds: this.session.seeds, bigCoins: this.session.bigCoins });
     this.activeScreen = new GameOverScreen(this, this.session.score);
   }
 
@@ -13199,7 +15346,9 @@ class Game {
     const isGameFinished = this.session.levelIndex >= LEVELS.length;
     recordAchievement({
       unlockedLevel: Math.min(this.session.levelIndex, LEVELS.length - 1),
-      score: this.session.score
+      score: this.session.score,
+      seeds: this.session.seeds,
+      bigCoins: this.session.bigCoins
     });
     if (isGameFinished) this.activeScreen = new EndingScreen(this, this.session.score);
     else this.showLevelIntro();

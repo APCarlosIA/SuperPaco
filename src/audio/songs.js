@@ -207,6 +207,40 @@ export const SONGS = Object.freeze({
     ]
   },
 
+  /** Flor Maravilla: tonada saltarina y psicodélica. */
+  maravilla: {
+    tempoBpm: 168,
+    loops: true,
+    tracks: [
+      { instrument: INSTRUMENT.PULSE_25, volume: 0.16, notes: `
+        E5:2 G5:2 C6:2 G5:2 E5:2 G5:2 A5:2 G5:2   D5:2 F5:2 A5:2 F5:2 D5:2 F5:2 G5:2 F5:2
+        C5:2 E5:2 G5:2 E5:2 C6:4 B5:2 G5:2        A5:2 G5:2 E5:2 D5:2 C5:8` },
+      { instrument: INSTRUMENT.PULSE_12, volume: 0.07, notes: `
+        r:2 E4:2 r:2 G4:2 r:2 E4:2 r:2 G4:2       r:2 F4:2 r:2 A4:2 r:2 F4:2 r:2 A4:2
+        r:2 E4:2 r:2 G4:2 r:2 E4:2 r:2 G4:2       r:2 F4:2 r:2 G4:2 r:2 E4:2 r:2 C4:2` },
+      { instrument: INSTRUMENT.TRIANGLE, volume: 0.3, notes: `
+        C3:4 G3:4 C3:4 G3:4  F3:4 C4:4 F3:4 C4:4  C3:4 G3:4 C3:4 G3:4  F3:4 G3:4 C3:8` },
+      { instrument: INSTRUMENT.NOISE, volume: 0.1, notes: repeatNotes('k:2 h:2 s:2 h:2', 8) }
+    ]
+  },
+
+  /** Maravilla en tono menor: apagón y estampida. */
+  maravillaSombra: {
+    tempoBpm: 184,
+    loops: true,
+    tracks: [
+      { instrument: INSTRUMENT.PULSE_25, volume: 0.16, notes: `
+        A4:2 C5:2 E5:2 C5:2 A4:2 C5:2 B4:2 A4:2   G4:2 B4:2 D5:2 B4:2 G4:2 B4:2 A4:2 G4:2
+        F4:2 A4:2 C5:2 A4:2 E5:4 D5:2 C5:2        B4:2 A4:2 G#4:2 B4:2 A4:8` },
+      { instrument: INSTRUMENT.PULSE_12, volume: 0.07, notes: `
+        r:2 E4:2 r:2 A4:2 r:2 E4:2 r:2 A4:2       r:2 D4:2 r:2 G4:2 r:2 D4:2 r:2 G4:2
+        r:2 C4:2 r:2 F4:2 r:2 C4:2 r:2 F4:2       r:2 E4:2 r:2 G#4:2 r:2 E4:2 r:2 A4:2` },
+      { instrument: INSTRUMENT.TRIANGLE, volume: 0.3, notes: `
+        A2:4 E3:4 A2:4 E3:4  G2:4 D3:4 G2:4 D3:4  F2:4 C3:4 F2:4 C3:4  E2:4 E3:4 A2:8` },
+      { instrument: INSTRUMENT.NOISE, volume: 0.12, notes: repeatNotes('k:2 h:2 s:2 k:2', 8) }
+    ]
+  },
+
   /** Victoria contra el jefe y final bueno. */
   fanfare: {
     tempoBpm: 140,

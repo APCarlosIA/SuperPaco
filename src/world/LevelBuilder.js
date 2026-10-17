@@ -26,7 +26,7 @@ export const GOAL_POLE_TOP_ROW = 3;
 
 /**
  * @typedef {Object} SpawnPoint Algo que aparece cuando la cámara se acerca.
- * @property {'enemy'|'movingPlatform'|'fireBar'|'windmillBlades'|'lavaBubble'} kind
+ * @property {'enemy'|'movingPlatform'|'fireBar'|'windmillBlades'|'lavaBubble'|'wonderFlower'|'bigCoin'|'talker'|'door'} kind
  * @property {number} column
  * @property {number} row
  * @property {string} [enemyId] Tipo de enemigo (clave del catálogo de enemigos).
@@ -52,6 +52,10 @@ export const GOAL_POLE_TOP_ROW = 3;
  * @property {number|null} checkpointColumn
  * @property {number|null} goalColumn
  * @property {{firstColumn: number, lastColumn: number}|null} bossArena
+ * @property {{kind: string, startColumn: number, endColumn: number}|null} wonder Flor Maravilla del nivel.
+ * @property {Object<string, () => LevelData>} roomBuilders Salas secretas, que se construyen al entrar.
+ * @property {number} bigCoinCount Cuántas monedas gigantes tiene el nivel.
+ * @property {boolean} isRoom true si es una sala secreta y no un nivel entero.
  */
 
 /**
@@ -81,6 +85,11 @@ export class LevelBuilder {
     this.checkpointColumn = null;
     this.goalColumn = null;
     this.bossArena = null;
+    this.wonder = null;
+    this.roomBuilders = {};
+    this.bigCoinCount = 0;
+    /** Las salas secretas no tienen meta ni nubes ni plantas automáticas. */
+    this.isRoom = false;
   }
 
   /* ---------------- Terreno ---------------- */
@@ -94,6 +103,33 @@ export class LevelBuilder {
   addGround(fromColumn, toColumn, topRow = GROUND_TOP_ROW) {
     for (let column = fromColumn; column <= toColumn; column++) {
       for (let row = topRow; row < LEVEL_ROWS; row++) this.tileMap.setTile(column, row, TILE.GROUND);
+    }
+  }
+
+  /**
+   * Colina de suelo con las esquinas escalonadas.
+   * @param {number} fromColumn
+   * @param {number} toColumn Incluida.
+   * @param {number} height Altura máxima en baldosas sobre el suelo normal (1 a 3).
+   */
+  addHill(fromColumn, toColumn, height) {
+    for (let column = fromColumn; column <= toColumn; column++) {
+      const isEdge = column === fromColumn || column === toColumn;
+      const columnHeight = isEdge ? Math.max(1, height - 1) : height;
+      this.addGround(column, column, GROUND_TOP_ROW - columnHeight);
+    }
+  }
+
+  /**
+   * Cornisa flotante con un pasillo por debajo: se puede pasar por debajo (fácil)
+   * o saltar encima (4 baldosas, con carrerilla) para llegar a premios y plataformas.
+   * @param {number} fromColumn
+   * @param {number} length Columnas de largo.
+   */
+  addLedge(fromColumn, length) {
+    for (let column = fromColumn; column < fromColumn + length; column++) {
+      this.tileMap.setTile(column, 9, TILE.GROUND);
+      this.tileMap.setTile(column, 10, TILE.GROUND);
     }
   }
 
@@ -257,6 +293,116 @@ export class LevelBuilder {
     this.firecrackerZones.push({ startX: fromColumn * TILE_SIZE, endX: toColumn * TILE_SIZE });
   }
 
+  /* ---------------- Maravillas, secretos y salas ---------------- */
+
+  /**
+   * Flor Maravilla: al tocarla, el nivel se transforma hasta `endColumn`.
+   * Cada nivel tiene como mucho una. Al terminar aparece la Semilla Maravilla.
+   * @param {Object} flower
+   * @param {number} flower.column Columna de la flor (empieza el efecto).
+   * @param {number} [flower.row] Fila que pisa (por defecto, la del suelo normal).
+   * @param {'moon'|'rain'|'rhythm'|'dark'|'stampede'|'parade'} flower.kind Qué transformación provoca.
+   * @param {number} flower.endColumn Columna donde termina el efecto y aparece la semilla.
+   */
+  addWonder({ column, row = STANDING_ROW, kind, endColumn }) {
+    this.wonder = { kind, startColumn: column, endColumn };
+    this.spawnPoints.push({ kind: 'wonderFlower', column, row, settings: { eventKind: kind, endColumn } });
+  }
+
+  /**
+   * Moneda gigante escondida. Cada nivel debería tener tres.
+   * @param {number} column
+   * @param {number} row
+   */
+  addBigCoin(column, row) {
+    this.spawnPoints.push({ kind: 'bigCoin', column, row, settings: { number: this.bigCoinCount } });
+    this.bigCoinCount++;
+  }
+
+  /**
+   * Reserva el número de una moneda gigante que se pondrá en una sala secreta.
+   * @returns {number} Número de la moneda dentro del nivel.
+   */
+  reserveBigCoin() {
+    return this.bigCoinCount++;
+  }
+
+  /**
+   * Coloca la moneda gigante de una sala secreta con el número que se reservó en el nivel.
+   * @param {number} column
+   * @param {number} row
+   * @param {number} number Número devuelto por {@link reserveBigCoin}.
+   */
+  addNumberedBigCoin(column, row, number) {
+    this.spawnPoints.push({ kind: 'bigCoin', column, row, settings: { number } });
+  }
+
+  /**
+   * Arco de pesetas sueltas (sube y baja como un salto).
+   * @param {number} column Primera columna.
+   * @param {number} row Fila de los extremos.
+   * @param {number} count Número de pesetas.
+   * @param {number} [height] Cuánto sube el centro del arco, en baldosas.
+   */
+  addCoinArc(column, row, count, height = 2) {
+    for (let index = 0; index < count; index++) {
+      const lift = Math.round(Math.sin((index + 0.5) / count * Math.PI) * height);
+      this.tileMap.setTile(column + index, row - lift, TILE.COIN);
+    }
+  }
+
+  /**
+   * Personaje que charla cuando Paco se acerca (flores cotillas y cameos).
+   * @param {number} column
+   * @param {string[]} lines Frases; va diciendo una distinta cada vez.
+   * @param {Object} [options]
+   * @param {number} [options.row] Fila que pisa.
+   * @param {string} [options.look] 'flower' o el nombre de un sprite ('abuela', 'oveja_frame1'…).
+   */
+  addTalker(column, lines, { row = STANDING_ROW, look = 'flower' } = {}) {
+    this.spawnPoints.push({ kind: 'talker', column, row, settings: { lines, look } });
+  }
+
+  /**
+   * Entrada a una sala secreta. Se usa con ABAJO (alcantarilla) o ARRIBA (puerta).
+   * @param {Object} door
+   * @param {number} door.column
+   * @param {number} [door.row]
+   * @param {'manhole'|'door'} door.look
+   * @param {string} door.roomId Clave de una sala añadida con {@link addRoom}.
+   */
+  addDoor({ column, row = STANDING_ROW, look, roomId }) {
+    this.spawnPoints.push({ kind: 'door', column, row, settings: { look, roomId, direction: 'enter' } });
+  }
+
+  /**
+   * Define una sala secreta, que se construye al entrar en ella.
+   * @param {string} roomId
+   * @param {() => LevelData} buildRoom Debe devolver `room.build()` de otro LevelBuilder.
+   */
+  addRoom(roomId, buildRoom) {
+    this.roomBuilders[roomId] = buildRoom;
+  }
+
+  /**
+   * Plataformas "al ritmo" (se alternan con el pulso de la Flor Maravilla del compás).
+   * @param {number} column
+   * @param {number} row
+   * @param {number} length
+   * @param {'A'|'B'} group Los del grupo A empiezan sólidos y los del B, fantasma.
+   */
+  addBeatPlatforms(column, row, length, group) {
+    for (let offset = 0; offset < length; offset++) {
+      this.tileMap.setTile(column + offset, row, group === 'A' ? TILE.BEAT_A_ON : TILE.BEAT_B_OFF);
+    }
+  }
+
+  /** Marca la sala como tal y le pone una puerta de salida en `column`. */
+  setRoomExit(column, { row = STANDING_ROW, look = 'door' } = {}) {
+    this.isRoom = true;
+    this.spawnPoints.push({ kind: 'door', column, row, settings: { look, roomId: null, direction: 'exit' } });
+  }
+
   /* ---------------- Decorados y puntos clave ---------------- */
 
   /** Cartel de madera con un texto (memes, señales…). */
@@ -349,7 +495,7 @@ export class LevelBuilder {
   build() {
     const theme = THEMES[this.themeName];
     this.fillPits(theme.pitFilling);
-    this.addAutomaticScenery(theme);
+    if (!this.isRoom) this.addAutomaticScenery(theme);
     return {
       themeName: this.themeName,
       tileMap: this.tileMap,
@@ -359,7 +505,11 @@ export class LevelBuilder {
       firecrackerZones: this.firecrackerZones,
       checkpointColumn: this.checkpointColumn,
       goalColumn: this.goalColumn,
-      bossArena: this.bossArena
+      bossArena: this.bossArena,
+      wonder: this.wonder,
+      roomBuilders: this.roomBuilders,
+      bigCoinCount: this.bigCoinCount,
+      isRoom: this.isRoom
     };
   }
 }

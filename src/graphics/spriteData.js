@@ -117,11 +117,13 @@ export const PACO_BIG_POSES = Object.freeze({
 /**
  * Variantes de color de Paco:
  *   - normal: chándal rojo y amarillo.
+ *   - chef: el truco del cocinero (colores normales con gorro de chef).
  *   - spicy: tras comer un pimiento de Padrón (chándal verde, puede lanzar fuego).
  *   - sugarRushGold / sugarRushWhite: parpadeo del subidón de churros (invencible).
  */
 export const PACO_COLOR_VARIANTS = Object.freeze({
   normal: {},
+  chef: {},
   spicy: { R: '#00a844', Y: '#d82800', u: '#1c5020' },
   sugarRushGold: { R: '#fcd800', Y: '#fc7c00', u: '#c85000' },
   sugarRushWhite: { R: '#fcfcfc', Y: '#3cbcfc', u: '#2050e8', K: '#881400' }

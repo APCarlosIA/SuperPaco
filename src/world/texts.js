@@ -43,7 +43,21 @@ export const GAMEPLAY_MESSAGES = Object.freeze({
   brickTooHard: '¡NO PUEDOR!',
   bossIntro: 'DON HACIENDA: ¡PAGUE SUS IMPUESTOS!',
   bossDefeated: '¡ME VUELVO A SUIZA!',
-  recipeRecovered: '¡HAS RECUPERADO LA RECETA!'
+  recipeRecovered: '¡HAS RECUPERADO LA RECETA!',
+  /** Cartel al activar cada tipo de Flor Maravilla. */
+  wonderBanner: Object.freeze({
+    moon: '¡MARAVILLA! ¡LUNA!',
+    rain: '¡MARAVILLA! ¡LLUEVEN PESETAS!',
+    rhythm: '¡MARAVILLA! ¡AL COMPÁS!',
+    dark: '¡MARAVILLA! ¡SE FUNDIERON LOS PLOMOS!',
+    stampede: '¡MARAVILLA! ¡ENCIERRO!',
+    parade: '¡MARAVILLA! ¡DESFILE!',
+    default: '¡MARAVILLA!'
+  }),
+  wonderSeedAppears: '¡UNA SEMILLA MARAVILLA!',
+  seedCollected: '¡SEMILLA MARAVILLA!',
+  bigCoinCollected: '¡MONEDA GIGANTE!',
+  secretRoom: '¡SALA SECRETA!'
 });
 
 /** Historia que se cuenta al empezar una partida nueva. */
@@ -90,3 +104,4 @@ export const ITEM_HELP_ROWS = Object.freeze([
   ['loteria', 'DÉCIMO: +1 VIDA'],
   ['peseta_spin0', '100 PESETAS: +1 VIDA']
 ]);
+

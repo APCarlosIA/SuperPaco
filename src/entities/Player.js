@@ -56,6 +56,10 @@ export class Player extends Entity {
     this.walkAnimationProgress = 0;
     /** Aplastamiento al aterrizar (0 = normal); se recupera solo con el tiempo. */
     this.landingSquash = 0;
+    /** Multiplicador de la gravedad (la maravilla lunar lo reduce). */
+    this.gravityScale = 1;
+    /** Truco del cocinero: Paco lleva gorro de chef. */
+    this.isChef = false;
     /** Estiramiento al despegar (0 = normal). */
     this.takeOffStretch = 0;
     /** Últimas posiciones, para dibujar la estela al correr. */
@@ -247,8 +251,9 @@ export class Player extends Entity {
       soundEngine.playSoundEffect(this.isBig ? SOUND_EFFECT.JUMP_BIG : SOUND_EFFECT.JUMP_SMALL);
     }
     const isRisingWithJumpHeld = this.velocityY < 0 && controls.jumpHeld;
-    this.velocityY += isRisingWithJumpHeld ? PLAYER_PHYSICS.gravityWhileHoldingJump : PLAYER_PHYSICS.gravity;
-    if (this.velocityY > PLAYER_PHYSICS.maxFallSpeed) this.velocityY = PLAYER_PHYSICS.maxFallSpeed;
+    this.velocityY += (isRisingWithJumpHeld ? PLAYER_PHYSICS.gravityWhileHoldingJump : PLAYER_PHYSICS.gravity) * this.gravityScale;
+    const maxFallSpeed = PLAYER_PHYSICS.maxFallSpeed * (this.gravityScale < 1 ? 0.55 : 1);
+    if (this.velocityY > maxFallSpeed) this.velocityY = maxFallSpeed;
   }
 
   /** @private Lanza un pimiento picante si tiene el poder y no hay demasiados en pantalla. */
@@ -388,7 +393,8 @@ export class Player extends Entity {
   /** @private Elige los colores: parpadeo de churros, verde picante o normal. */
   chooseColorVariant() {
     if (this.isInvincible) return SUGAR_RUSH_COLOR_CYCLE[(this.ageInSteps >> 2) % SUGAR_RUSH_COLOR_CYCLE.length];
-    return this.powerLevel === POWER_LEVEL.SPICY ? 'spicy' : 'normal';
+    if (this.powerLevel === POWER_LEVEL.SPICY) return 'spicy';
+    return this.isChef ? 'chef' : 'normal';
   }
 
   /**

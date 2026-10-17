@@ -46,7 +46,15 @@ export const SOUND_EFFECT = Object.freeze({
   PAUSE: 'pause',
   TIME_TICK: 'timeTick',
   LAVA_HISS: 'lavaHiss',
-  CHECKPOINT: 'checkpoint'
+  CHECKPOINT: 'checkpoint',
+  WONDER_START: 'wonderStart',
+  WONDER_END: 'wonderEnd',
+  SEED: 'seed',
+  BIG_COIN: 'bigCoin',
+  DOOR: 'door',
+  TALK: 'talk',
+  BEAT: 'beat',
+  SECRET: 'secret'
 });
 
 /**
@@ -98,7 +106,18 @@ const SOUND_EFFECT_RECIPES = {
   [SOUND_EFFECT.PAUSE]: engine => engine.playMelodyNow(['E6', 'C6', 'E6', 'C6'], 0.07, INSTRUMENT.PULSE_25, 0.12),
   [SOUND_EFFECT.TIME_TICK]: (engine, now) => engine.playTone({ frequency: noteNameToFrequency('A6'), startTime: now, duration: 0.025, instrument: INSTRUMENT.PULSE_12, volume: 0.07 }),
   [SOUND_EFFECT.LAVA_HISS]: (engine, now) => engine.playNoise('hiHat', now, 0.08),
-  [SOUND_EFFECT.CHECKPOINT]: engine => engine.playMelodyNow(['G5', 'B5', 'D6', 'G6'], 0.06, INSTRUMENT.PULSE_25, 0.14)
+  [SOUND_EFFECT.CHECKPOINT]: engine => engine.playMelodyNow(['G5', 'B5', 'D6', 'G6'], 0.06, INSTRUMENT.PULSE_25, 0.14),
+  [SOUND_EFFECT.WONDER_START]: engine => engine.playMelodyNow(['C5', 'E5', 'G5', 'B5', 'D6', 'F#6', 'A6', 'C#7', 'E7', 'G7'], 0.045, INSTRUMENT.PULSE_12, 0.14),
+  [SOUND_EFFECT.WONDER_END]: engine => engine.playMelodyNow(['G6', 'E6', 'C6', 'G5', 'E5', 'C5'], 0.06, INSTRUMENT.PULSE_25, 0.13),
+  [SOUND_EFFECT.SEED]: engine => engine.playMelodyNow(['C6', 'E6', 'G6', 'C7', 'E7', 'G7', 'C7', 'E7', 'G7', 'C8'], 0.06, INSTRUMENT.PULSE_25, 0.15),
+  [SOUND_EFFECT.BIG_COIN]: engine => engine.playMelodyNow(['E6', 'B6', 'E7', 'G#7', 'B7'], 0.055, INSTRUMENT.PULSE_12, 0.15),
+  [SOUND_EFFECT.DOOR]: (engine, now) => {
+    engine.playTone({ frequency: 220, slideToFrequency: 110, startTime: now, duration: 0.14, instrument: INSTRUMENT.TRIANGLE, volume: 0.3 });
+    engine.playNoise('swish', now + 0.05, 0.2, 0.1);
+  },
+  [SOUND_EFFECT.TALK]: (engine, now) => engine.playTone({ frequency: 560 + Math.random() * 260, startTime: now, duration: 0.03, instrument: INSTRUMENT.PULSE_12, volume: 0.06 }),
+  [SOUND_EFFECT.BEAT]: (engine, now) => engine.playTone({ frequency: 150, slideToFrequency: 90, startTime: now, duration: 0.07, instrument: INSTRUMENT.TRIANGLE, volume: 0.22 }),
+  [SOUND_EFFECT.SECRET]: engine => engine.playMelodyNow(['A5', 'C#6', 'E6', 'A6', 'E6', 'C#6', 'A5', 'E6', 'A6'], 0.05, INSTRUMENT.PULSE_25, 0.13)
 };
 
 /**
